@@ -61,31 +61,18 @@ void ofApp::update()
 void ofApp::draw()
 {
 	ofBackground(0);
-	engine.drawDebug(cam);
+    cam.begin();
+    ofSetColor(80, 200, 255);
+    for (const auto& b : engine.getBoids())  // you need a getter in the engine
+    {
+        glm::vec3 pos = engine.getBoidPosition(b.index); // getter for spatialPos
+        ofDrawSphere(pos, 3.0f);
+    }
+    cam.end();
 }
 
 //--------------------------------------------------------------
 void ofApp::keyPressed(int key)
 {
-    // Press 1,2,3,4 to switch between swarm presets
-    switch(key)
-    {
-        case '1':
-            engine.applyPreset(preset1);
-            ofLog() << "Preset 1 applied: bright, smooth, low density trigger";
-            break;
-        case '2':
-            engine.applyPreset(preset2);
-            ofLog() << "Preset 2 applied: medium flow, medium trigger probability";
-            break;
-        case '3':
-            engine.applyPreset(preset3);
-            ofLog() << "Preset 3 applied: dense timbre, strong amplitude response";
-            break;
-        case '4':
-            engine.applyPreset(preset4);
-            ofLog() << "Preset 4 applied: slow, sparse, long envelopes";
-            break;
-    }
 }
 

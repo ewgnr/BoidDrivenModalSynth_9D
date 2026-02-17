@@ -14,6 +14,6 @@ public:
 	
 	ofSoundStream soundStream;
 	SwarmOSCReceiver swarm;
-	BoidSoundEngine engine;
+	AdaptiveBoidSoundEngine engine;
 	ofEasyCam cam;
 };
