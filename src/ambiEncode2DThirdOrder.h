@@ -12,9 +12,9 @@ public:
 	AmbiEncode2D()
 		: output {} { }
 
-	inline std::array<double, 7> play(double pAudioIn, double pAzimuthDeg, double pDistance)
+	inline std::array<double,7> play(double pAudioIn, double azRad, double pDistance)
 	{
-		double az = M_PI * pAzimuthDeg / 180.0;
+		double az = azRad;
 		if (pDistance < 0) az += M_PI;
 		double dist = std::abs(pDistance) + 0.0001;
 

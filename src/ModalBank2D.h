@@ -84,6 +84,12 @@ public:
         return sums;
     }
 
+	size_t getNumModes(size_t sourceIdx) const
+	{
+		if (sourceIdx >= nodes.size()) return 0;
+		return nodes[sourceIdx].size();
+	}
+
     // Access per-mode outputs if needed
     const std::vector<std::vector<double>> & getOutputs() const { return output; }
 

@@ -22,15 +22,10 @@ public:
     {
         BoidSpatial2D out;
 
-        // -------- azimuth (XZ plane) --------
-        out.azimuthRad = std::atan2(x, z); // front = +z
+        out.azimuthRad = std::atan2(x, z);
 
-        // -------- distance --------
-        const double d =
-            std::sqrt(x * x + y * y + z * z);
-
-        out.distance =
-            std::clamp(d / maxRadius, 0.0, 1.0);
+        const double d = std::sqrt(x * x + y * y + z * z);
+        out.distance = std::clamp(d / maxRadius, 0.0, 1.0);
 
         return out;
     }

@@ -56,6 +56,11 @@ public:
     void update(const std::vector<BoidState9D>& boids)
     {
         if(subspaces.empty()) return;
+		if (boids.size() > spatialPos.size())
+		{
+			spatialPos.resize(boids.size(), glm::vec3(0.0f));
+			densities.resize(boids.size(), 0.0f);
+		}
         N = static_cast<int>(boids.size());
         computeSpatialPositions(boids);
         computeDensities(boids);
@@ -88,10 +93,9 @@ private:
         for(int i=0;i<N;i++)
         {
             glm::vec3 agg(0.0f);
-            for(const auto& s : subspaces)
-                agg += s.weight * extractPos(boids[i],s);
-            spatialPos[i] = spatialSmooth*spatialPos[i] + (1.0f - spatialSmooth)*agg;
-        }
+            for(const auto& s : subspaces) agg += s.weight * extractPos(boids[i],s);
+			    spatialPos[i] = spatialSmooth * spatialPos[i] + (1.0f - spatialSmooth) * agg;
+		}
     }
 
     void computeDensities(const std::vector<BoidState9D>& boids)
@@ -117,7 +121,6 @@ private:
     }
 };
 
-// --- Adaptive preset ---
 struct AdaptivePreset
 {
     std::vector<Subspace> subspaces;
@@ -126,13 +129,11 @@ struct AdaptivePreset
     double bandwidthScale = 1.0;
     double detuneScale = 0.02;
     double minFreq = 100.0;
-    double maxFreq = 1200.0;      // größere Range für dramatische Wechsel
+    double maxFreq = 1200.0;
     double minAmp  = 0.01;
-    double maxAmp  = 0.7;         // höhere Maximalamplitude für sparse Boids
+    double maxAmp  = 0.7;
 };
 
-// --- Adaptive single instrument engine ---
-// --- Single adaptive instrument mode ---
 class AdaptiveBoidSoundEngine : public ofBaseSoundOutput
 {
 public:
@@ -141,7 +142,6 @@ public:
         N = maxBoids;
         aggregator.setup(N);
 
-        // Only one adaptive preset
         preset.subspaces = {
             { {0,1,2}, 0.5f, 0.6f },
             { {3,4,5}, 0.3f, 0.5f },
@@ -158,121 +158,217 @@ public:
         envelopes.resize(N);
         densities.resize(N, 0.0);
 
-        // Feste Envelope: nicht skaliert
         for(auto & env : envelopes) 
             env.set(preset.envelopeShape);
 
         speakerAz = { -0.5*PI, 0.5*PI };
     }
 
-    void updateBoids(const std::vector<BoidState9D> & boidsIn)
-    {
-        boids = boidsIn;
-        N = static_cast<int>(boids.size());
+	void updateBoids(const std::vector<BoidState9D>& boidsIn)
+	{
+		boids = boidsIn;
+		N = static_cast<int>(boids.size());
 
-        if(smoothedFreq.size() != N) smoothedFreq.resize(N,0.0);
-        if(envelopes.size() != N) envelopes.resize(N);
-        if(densities.size() != N) densities.resize(N,0.0);
+		if(smoothedFreq.size() != N) smoothedFreq.resize(N,0.0);
+		if(envelopes.size() != N) envelopes.resize(N);
+		if(densities.size() != N) densities.resize(N,0.0);
 
-        aggregator.update(boids);
+		aggregator.update(boids);
 
-        for(int i=0; i<N; i++)
-        {
-            float density = densities[i];
-            float speed = glm::length(glm::vec3(
-                boids[i].velocity[0],
-                boids[i].velocity[1],
-                boids[i].velocity[2]));
+		for(int i = 0; i < N; i++)
+			densities[i] = aggregator.getDensity(i);
 
-            // Feste Trigger-Wahrscheinlichkeit abhängig von Density/Speed
-            float triggerProb = 0.1f + 0.2f * speed; // einfach + minimal
-            if(ofRandom(1.0f) < triggerProb)
-                envelopes[i].reset(); // feste Envelope
-        }
-    }
+		for(int i=0; i<N; i++)
+		{
+			float speed = glm::length(glm::vec3(
+				boids[i].velocity[0],
+				boids[i].velocity[1],
+				boids[i].velocity[2]));
+
+			float triggerProb = 0.15f + 0.25f * speed;
+			triggerProb = std::clamp(triggerProb, 0.0f, 1.0f);
+
+			if(ofRandom(1.0f) < triggerProb)
+			{
+				float density = densities[i];
+
+				float speed = glm::length(glm::vec3(
+					boids[i].velocity[0],
+					boids[i].velocity[1],
+					boids[i].velocity[2]));
+
+				// Attack: fast when chaotic, slow when sparse
+				double attack = ofMap(density, 0.0, 1.0, 0.4, 0.02, true);
+
+				// Decay: longer when cinematic
+				double decay = ofMap(density, 0.0, 1.0, 1.2, 0.2, true);
+
+				// Peak amplitude scaling
+				double peak = ofMap(speed, 0.0, 2.0, 0.4, 1.0, true);
+
+				std::vector<std::pair<double,double>> shape =
+				{
+					{ attack, peak },
+					{ attack + decay, 0.0 }
+				};
+
+				envelopes[i].set(shape);
+				envelopes[i].reset();
+			}
+		}
+	}
 
     void processModalParams()
-    {
-        const double smooth = 0.995;
-        for(int j=0;j<N;j++)
-        {
-            const auto & b = boids[j];
-            glm::vec3 r(b.dims[0], b.dims[1], b.dims[2]);
-            if(glm::length(r) > 1e-6) r = glm::normalize(r);
+	{
+		const double smooth = 0.995;
 
-            glm::vec3 t1(b.dims[3], b.dims[4], b.dims[5]);
-            t1 = t1 - glm::dot(t1,r)*r;
-            double flow = glm::length(t1);
-            if(flow > 1e-6) t1 = glm::normalize(t1); else t1 = glm::vec3(0.0f);
+		for(int j=0;j<N;j++)
+		{
+			const auto & b = boids[j];
 
-            glm::vec3 t2 = glm::cross(r,t1);
-            double curvature = glm::length(t2);
-            if(curvature > 1e-6) t2 = glm::normalize(t2);
+			glm::vec3 r(b.dims[0], b.dims[1], b.dims[2]);
+			if(glm::length(r) > 1e-6) r = glm::normalize(r);
 
-            double radialHeight = 0.5*(r.y + 1.0);
-            double targetFreq = preset.minFreq + (preset.maxFreq - preset.minFreq)*radialHeight;
-            smoothedFreq[j] = smooth*smoothedFreq[j] + (1.0 - smooth)*targetFreq;
+			glm::vec3 t1(b.dims[3], b.dims[4], b.dims[5]);
+			t1 = t1 - glm::dot(t1,r)*r;
+			double flow = glm::length(t1);
+			if(flow > 1e-6) t1 = glm::normalize(t1); else t1 = glm::vec3(0.0f);
 
-            double ampBase = (preset.minAmp + preset.maxAmp)/2.0; // feste Amplitude
+			glm::vec3 t2 = glm::cross(r,t1);
+			double curvature = glm::length(t2);
+			if(curvature > 1e-6) t2 = glm::normalize(t2);
 
-            double baseBandwidth = 100.0 + 150.0*flow;
-            baseBandwidth *= preset.bandwidthScale;
-            baseBandwidth = std::clamp(baseBandwidth,80.0,400.0);
+			double speed = glm::length(glm::vec3(
+				b.velocity[0], b.velocity[1], b.velocity[2]));
 
-            double detuneAmt = (0.05*curvature + 0.02*glm::length(glm::vec3(b.velocity[0],b.velocity[1],b.velocity[2])))*preset.detuneScale;
+			double density = densities[j];
 
-            const size_t modes = modalBank2D.getOutputs()[j].size();
-            for(size_t m=0;m<modes;m++)
-            {
-                double frq = smoothedFreq[j]*(1.0 + detuneAmt*m);
-                double bw  = baseBandwidth*(1.0 + 0.2*m);
-                double a   = ampBase / (1.0 + 0.5*m);
-                modalBank2D.setParams(j,m,frq,bw,a);
-            }
-        }
-    }
+			// --------------------------------------------------
+			// FREQUENCY (Cinematic / Chaotic)
+			// --------------------------------------------------
 
-    void audioOut(ofSoundBuffer& buffer) override
-    {
-        processModalParams();
+			double radialHeight = 0.5*(r.y + 1.0);
 
-        for(size_t i=0; i<buffer.getNumFrames(); i++)
-        {
-            for(int j=0; j<N; j++)
-            {
-                double env = envelopes[j].play(1.0/SAMPLERATE);
-                if(env > 0.0)
-                {
-                    double x = env*noiseGen.play()*0.5; // feste Excitation
-                    modalBank2D.exciteSource(j,x);
-                }
-            }
+			double radialCurve = pow(radialHeight, 0.6);
 
-            auto boidOutputs = modalBank2D.playMulti();
-            std::array<double,7> ambiFrame{}; ambiFrame.fill(0.0);
+			double densityLift = 1.0 + density * 1.5;
 
-            for(int j=0;j<N;j++)
-            {
-                glm::vec3 p = aggregator.getSpatialPos(j);
-                double az = std::atan2(p.z,p.x);
-                double dist = glm::length(p);
-                dist = std::clamp(dist,0.05,1.0);
-                double distanceGain = std::exp(-3.0*dist);
-                auto boidFrame = ambiEnc.play(boidOutputs[j]*distanceGain, az, dist);
-                for(size_t k=0;k<7;k++) ambiFrame[k] += boidFrame[k];
-            }
+			double targetFreq = preset.minFreq + (preset.maxFreq - preset.minFreq) * radialCurve * densityLift;
 
-            std::array<double,2> stereo{};
-            for(size_t ch=0; ch<2; ch++)
-            {
-                double sOut = ambiDec.play(ambiFrame,speakerAz[ch]);
-                stereo[ch] = std::tanh(sOut);
-            }
+			targetFreq = std::clamp(targetFreq, preset.minFreq, preset.maxFreq);
 
-            for(size_t ch=0; ch<2; ch++)
-                buffer[i*2 + ch] = float(stereo[ch]);
-        }
-    }
+			if (smoothedFreq[j] <= 0.0) smoothedFreq[j] = targetFreq;
+			smoothedFreq[j] = smooth*smoothedFreq[j] + (1.0-smooth)*targetFreq;
+
+			// --------------------------------------------------
+			// AMPLITUDE
+			// --------------------------------------------------
+
+			double ampCinematic = 0.4 * (1.0 - density);
+			double ampChaotic   = 0.8 * density * flow;
+
+			double ampBase = preset.minAmp + (preset.maxAmp - preset.minAmp) * (ampCinematic + ampChaotic);
+
+			ampBase = std::clamp(ampBase, preset.minAmp, preset.maxAmp);
+
+			// --------------------------------------------------
+			// BANDWIDTH (tonal / noisy)
+			// --------------------------------------------------
+
+			double bwTonal   = 60.0;
+			double bwNoise   = 500.0;
+
+			double bwMix = density * flow;
+
+			double baseBandwidth = bwTonal + (bwNoise - bwTonal) * bwMix;
+
+			baseBandwidth *= preset.bandwidthScale;
+
+			// --------------------------------------------------
+			// DETUNE (wide beating / harmonic)
+			// --------------------------------------------------
+
+			double detuneClean  = 0.001;
+			double detuneChaos  = 0.05;
+
+			double detuneAmt = detuneClean + (detuneChaos - detuneClean) * (density * 0.7 + curvature * 0.3);
+
+			detuneAmt *= preset.detuneScale;
+
+			// --------------------------------------------------
+			// Update modes
+			// --------------------------------------------------
+
+			const size_t modes = modalBank2D.getNumModes(j);
+
+			for(size_t m = 0; m < modes; m++)
+			{
+				double frq = smoothedFreq[j] * (1.0 + detuneAmt * m);
+
+				frq = std::clamp(frq, preset.minFreq, preset.maxFreq);
+
+				double bw = baseBandwidth * (1.0 + 0.3 * m);
+
+				double a = ampBase / (1.0 + 0.4 * m);
+
+				modalBank2D.setParams(j, m, frq, bw, a);
+			}
+		}
+	}
+
+	void audioOut(ofSoundBuffer& buffer) override
+	{
+		processModalParams();
+
+		for(size_t i = 0; i < buffer.getNumFrames(); i++)
+		{
+			// excite modal banks with envelope + noise
+			for(int j = 0; j < N; j++)
+			{
+				double env = envelopes[j].play(1.0 / SAMPLERATE);
+
+				if(env > 0.0)
+				{
+					double noise = noiseGen.play();
+					modalBank2D.exciteSource(j, env * noise * 0.25);
+				}
+			}
+
+			// collect modal outputs
+			auto boidOutputs = modalBank2D.playMulti();
+
+			std::array<double,7> ambiFrame{};
+			ambiFrame.fill(0.0);
+
+			for(int j = 0; j < N; j++)
+			{
+				glm::vec3 p = aggregator.getSpatialPos(j);
+
+				double az = std::atan2(p.z, p.x);
+				double dist = glm::length(p);
+				dist = std::clamp(dist, 0.05, 1.0);
+
+				double distanceGain = std::exp(-3.0 * dist);
+
+				auto boidFrame = ambiEnc.play(boidOutputs[j] * distanceGain, az, dist);
+
+				for(size_t k = 0; k < 7; k++)
+					ambiFrame[k] += boidFrame[k];
+			}
+
+			std::array<double,2> stereo{};
+
+			for(size_t ch = 0; ch < 2; ch++)
+			{
+				double sOut = ambiDec.play(ambiFrame, speakerAz[ch]);
+
+				stereo[ch] = std::tanh(sOut);
+			}
+
+			buffer[i * 2]     = float(stereo[0]);
+			buffer[i * 2 + 1] = float(stereo[1]);
+		}
+	}
 
 	const std::vector<BoidState9D>& getBoids() const { return boids; }
 	glm::vec3 getBoidPosition(int i) const { return aggregator.getSpatialPos(i); }
