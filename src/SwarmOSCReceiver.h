@@ -90,6 +90,54 @@ public:
 		ofSetColor(255);
 	}
 
+	void printMinMax()
+	{
+		if (boids.empty()) return;
+
+		float posMin[3][3], posMax[3][3];
+		float velMin[3][3], velMax[3][3];
+
+		for (int d = 0; d < 3; d++)
+		{ 
+			for (int axis = 0; axis < 3; axis++)
+			{
+				posMin[d][axis] = posMax[d][axis] = boids[0].position[d * 3 + axis];
+				velMin[d][axis] = velMax[d][axis] = boids[0].velocity[d * 3 + axis];
+			}
+		}
+
+		for (const auto &b : boids)
+		{
+			for (int d = 0; d < 3; d++) {
+				for (int axis = 0; axis < 3; axis++) {
+					float p = b.position[d * 3 + axis];
+					if (p < posMin[d][axis]) posMin[d][axis] = p;
+					if (p > posMax[d][axis]) posMax[d][axis] = p;
+
+					float v = b.velocity[d * 3 + axis];
+					if (v < velMin[d][axis]) velMin[d][axis] = v;
+					if (v > velMax[d][axis]) velMax[d][axis] = v;
+				}
+			}
+		}
+
+		std::cout << "Position Min/Max per Axis:\n";
+		for (int d = 0; d < 3; d++) {
+			std::cout << "D" << (d+1) 
+					  << " x:[" << posMin[d][0] << "," << posMax[d][0] << "] "
+					  << "y:[" << posMin[d][1] << "," << posMax[d][1] << "] "
+					  << "z:[" << posMin[d][2] << "," << posMax[d][2] << "]\n";
+		}
+
+		std::cout << "Velocity Min/Max per Axis:\n";
+		for (int d = 0; d < 3; d++) {
+			std::cout << "D" << (d+1) 
+					  << " x:[" << velMin[d][0] << "," << velMax[d][0] << "] "
+					  << "y:[" << velMin[d][1] << "," << velMax[d][1] << "] "
+					  << "z:[" << velMin[d][2] << "," << velMax[d][2] << "]\n";
+		}
+	}
+
 private:
 	ofxOscReceiver receiver;
 	int swarmIndex = -1;
@@ -127,9 +175,13 @@ private:
 			{
 				float v = msg.getArgAsFloat(argIndex++);
 				if (type == "position")
+				{
 					boids[i].position[d] = v;
+				}
 				else if (type == "velocity")
+				{
 					boids[i].velocity[d] = v;
+				}
 			}
 		}
 	}

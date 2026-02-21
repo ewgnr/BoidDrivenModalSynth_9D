@@ -53,6 +53,7 @@ void ofApp::setup()
 void ofApp::update()
 {
 	swarm.update();
+	// swarm.printMinMax();
 	auto boids9D = convertTo9D(swarm.getBoids());
 	engine.updateBoids(boids9D);
 }
