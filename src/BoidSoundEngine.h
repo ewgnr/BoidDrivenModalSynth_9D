@@ -20,36 +20,36 @@ constexpr double BUFFERSIZE = 1024;
 #define DIMS_PER_BOID 9
 
 // --- Trigger behaviour ---
-constexpr double TRIGGER_MIX                = 0.5;
-constexpr double TRIGGER_MIN_RATE           = 10.0;    
-constexpr double TRIGGER_MAX_RATE           = 300.0;   
-constexpr double TRIGGER_CURVE_EXPONENT     = 0.7;     
-constexpr double ABSOLUTE_DISTANCE_SCALE    = 600.0;   
+std::atomic<double> TRIGGER_MIX              {0.5};
+std::atomic<double> TRIGGER_MIN_RATE         {10.0};
+std::atomic<double> TRIGGER_MAX_RATE         {300.0};
+std::atomic<double> TRIGGER_CURVE_EXPONENT   {0.7};
+std::atomic<double> ABSOLUTE_DISTANCE_SCALE  {600.0};
 
 // --- Density behaviour ---
-constexpr double DENSITY_EXP_SCALE          = 2.0;     
+std::atomic<double> DENSITY_EXP_SCALE        {2.0};
 
 // --- Frequency mapping ---
-constexpr double FREQ_MIN                   = 100.0;
-constexpr double FREQ_MAX                   = 1000.0;
-constexpr double FREQ_DENSITY_INFLUENCE     = 1.5;
-constexpr double FREQ_RADIAL_EXPONENT       = 0.6;
-constexpr double FREQ_SMOOTHING             = 0.995;
+std::atomic<double> FREQ_MIN                 {100.0};
+std::atomic<double> FREQ_MAX                 {1000.0};
+std::atomic<double> FREQ_DENSITY_INFLUENCE  {1.5};
+std::atomic<double> FREQ_RADIAL_EXPONENT    {0.6};
+std::atomic<double> FREQ_SMOOTHING           {0.995};
 
 // --- Modal structure ---
-constexpr double MODE_FREQ_SPREAD           = 0.01;
-constexpr double MODE_BW_BASE               = 80.0;
-constexpr double MODE_BW_SPREAD             = 0.2;
-constexpr double MODE_AMP_BASE              = 0.3;
-constexpr double MODE_AMP_DECAY             = 0.4;
+std::atomic<double> MODE_FREQ_SPREAD         {0.01};
+std::atomic<double> MODE_BW_BASE             {80.0};
+std::atomic<double> MODE_BW_SPREAD           {0.2};
+std::atomic<double> MODE_AMP_BASE            {0.3};
+std::atomic<double> MODE_AMP_DECAY           {0.4};
 
 // --- Spatial rendering ---
-constexpr double SPATIAL_DISTANCE_MIN       = 0.05;
-constexpr double SPATIAL_DISTANCE_MAX       = 1.0;
-constexpr double SPATIAL_GAIN_EXP           = 3.0;
+std::atomic<double> SPATIAL_DISTANCE_MIN     {0.05};
+std::atomic<double> SPATIAL_DISTANCE_MAX     {1.0};
+std::atomic<double> SPATIAL_GAIN_EXP         {3.0};
 
 // --- Output stage ---
-constexpr double OUTPUT_TANH_DRIVE          = 4.0;
+std::atomic<double> OUTPUT_TANH_DRIVE        {4.0};
 
 struct BoidState9D
 {
@@ -144,7 +144,7 @@ private:
 
             float meanDist = (count>0) ? sum / count : 1.f;
             meanDistances[i] = meanDist;
-            densities[i] = std::exp(-meanDist * DENSITY_EXP_SCALE);
+            densities[i] = std::exp(-meanDist * DENSITY_EXP_SCALE.load(std::memory_order_relaxed));
         }
     }
 
@@ -232,22 +232,22 @@ void audioOut(ofSoundBuffer& buffer) override
 
     double globalDist = globalMeanDistance.load(std::memory_order_acquire);
 
-    const double mix = TRIGGER_MIX;
-    const double maxRate = TRIGGER_MAX_RATE;
-    const double minRate = TRIGGER_MIN_RATE;
+    const double mix = TRIGGER_MIX.load(std::memory_order_relaxed);
+    const double maxRate = TRIGGER_MAX_RATE.load(std::memory_order_relaxed);
+    const double minRate = TRIGGER_MIN_RATE.load(std::memory_order_relaxed);
 
     for (int j = 0; j < N; j++)
     {
         double meanDist = aggregator.getMeanDistance(j);
 
         double adaptive = meanDist / (globalDist + 1e-9);
-        double absolute = meanDist / ABSOLUTE_DISTANCE_SCALE;
+        double absolute = meanDist / ABSOLUTE_DISTANCE_SCALE.load(std::memory_order_relaxed);
 
         double relative = mix * adaptive + (1.0 - mix) * absolute;
 
         double compression = std::clamp(1.0 - relative, 0.0, 1.0);
 
-        double rate = minRate + (maxRate - minRate) * std::pow(compression, TRIGGER_CURVE_EXPONENT);
+        double rate = minRate + (maxRate - minRate) * std::pow(compression, TRIGGER_CURVE_EXPONENT.load(std::memory_order_relaxed));
 
         triggerRate[j] = rate;
     }
@@ -279,9 +279,9 @@ void audioOut(ofSoundBuffer& buffer) override
             glm::vec3 p = aggregator.getSpatialPos(j);
 
             double az   = std::atan2(p.z, p.x);
-            double dist = std::clamp((double)glm::length(p), SPATIAL_DISTANCE_MIN, SPATIAL_DISTANCE_MAX);
+            double dist = std::clamp((double)glm::length(p), SPATIAL_DISTANCE_MIN.load(std::memory_order_relaxed), SPATIAL_DISTANCE_MAX.load(std::memory_order_relaxed));
 
-            double gain = std::exp(-SPATIAL_GAIN_EXP  * dist);
+            double gain = std::exp(-SPATIAL_GAIN_EXP.load(std::memory_order_relaxed)  * dist);
 
             auto frame = ambiEnc.play(boidOutputs[j] * gain, az, dist);
 
@@ -293,7 +293,7 @@ void audioOut(ofSoundBuffer& buffer) override
         {
             double sOut = ambiDec.play(ambiFrame, speakerAz[ch]);
 
-            buffer[i*2 + ch] = std::tanh(sOut) * OUTPUT_TANH_DRIVE;
+            buffer[i*2 + ch] = std::tanh(sOut) * OUTPUT_TANH_DRIVE.load(std::memory_order_relaxed);
         }
     }
 }
@@ -341,7 +341,7 @@ private:
 
     void computeModalParamsControl()
     {
-        const double smooth = FREQ_SMOOTHING;
+        const double smooth = FREQ_SMOOTHING.load(std::memory_order_relaxed);
 
         for(int j=0;j<N;j++)
         {
@@ -352,11 +352,11 @@ private:
 
             double radialHeight = 0.5*(r.y+1.0);
 
-            double radialCurve = pow(radialHeight,FREQ_RADIAL_EXPONENT);
+            double radialCurve = pow(radialHeight,FREQ_RADIAL_EXPONENT.load(std::memory_order_relaxed));
 
-            double targetFreq = FREQ_MIN + (FREQ_MAX - FREQ_MIN) * radialCurve * (1.0 + densities[j] * FREQ_DENSITY_INFLUENCE);
+            double targetFreq = FREQ_MIN.load(std::memory_order_relaxed) + (FREQ_MAX.load(std::memory_order_relaxed) - FREQ_MIN.load(std::memory_order_relaxed)) * radialCurve * (1.0 + densities[j] * FREQ_DENSITY_INFLUENCE.load(std::memory_order_relaxed));
 
-            targetFreq = std::clamp(targetFreq,FREQ_MIN,FREQ_MAX - FREQ_MIN);
+            targetFreq = std::clamp(targetFreq,FREQ_MIN.load(std::memory_order_relaxed),FREQ_MAX.load(std::memory_order_relaxed) - FREQ_MIN.load(std::memory_order_relaxed));
 
             if(smoothedFreq[j] <= 0.0)
                 smoothedFreq[j] = targetFreq;
@@ -365,9 +365,9 @@ private:
 
             for(size_t m=0; m<workingBuffer.perBoid[j].freq.size(); m++)
             {
-				workingBuffer.perBoid[j].freq[m] = smoothedFreq[j] * (1.0 + MODE_FREQ_SPREAD * m);
-				workingBuffer.perBoid[j].bw[m] = MODE_BW_BASE * (1.0 + MODE_BW_SPREAD * m);
-				workingBuffer.perBoid[j].amp[m] = MODE_AMP_BASE / (1.0 + MODE_AMP_DECAY * m);
+				workingBuffer.perBoid[j].freq[m] = smoothedFreq[j] * (1.0 + MODE_FREQ_SPREAD.load(std::memory_order_relaxed) * m);
+				workingBuffer.perBoid[j].bw[m] = MODE_BW_BASE.load(std::memory_order_relaxed) * (1.0 + MODE_BW_SPREAD.load(std::memory_order_relaxed) * m);
+				workingBuffer.perBoid[j].amp[m] = MODE_AMP_BASE.load(std::memory_order_relaxed) / (1.0 + MODE_AMP_DECAY.load(std::memory_order_relaxed) * m);
             }
         }
     }
