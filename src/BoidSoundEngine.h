@@ -19,6 +19,38 @@ constexpr double BUFFERSIZE = 1024;
 
 #define DIMS_PER_BOID 9
 
+// --- Trigger behaviour ---
+constexpr double TRIGGER_MIX                = 0.5;
+constexpr double TRIGGER_MIN_RATE           = 10.0;    
+constexpr double TRIGGER_MAX_RATE           = 300.0;   
+constexpr double TRIGGER_CURVE_EXPONENT     = 0.7;     
+constexpr double ABSOLUTE_DISTANCE_SCALE    = 600.0;   
+
+// --- Density behaviour ---
+constexpr double DENSITY_EXP_SCALE          = 2.0;     
+
+// --- Frequency mapping ---
+constexpr double FREQ_MIN                   = 100.0;
+constexpr double FREQ_MAX                   = 1000.0;
+constexpr double FREQ_DENSITY_INFLUENCE     = 1.5;
+constexpr double FREQ_RADIAL_EXPONENT       = 0.6;
+constexpr double FREQ_SMOOTHING             = 0.995;
+
+// --- Modal structure ---
+constexpr double MODE_FREQ_SPREAD           = 0.01;
+constexpr double MODE_BW_BASE               = 80.0;
+constexpr double MODE_BW_SPREAD             = 0.2;
+constexpr double MODE_AMP_BASE              = 0.3;
+constexpr double MODE_AMP_DECAY             = 0.4;
+
+// --- Spatial rendering ---
+constexpr double SPATIAL_DISTANCE_MIN       = 0.05;
+constexpr double SPATIAL_DISTANCE_MAX       = 1.0;
+constexpr double SPATIAL_GAIN_EXP           = 3.0;
+
+// --- Output stage ---
+constexpr double OUTPUT_TANH_DRIVE          = 4.0;
+
 struct BoidState9D
 {
     int index = 0;
@@ -112,7 +144,7 @@ private:
 
             float meanDist = (count>0) ? sum / count : 1.f;
             meanDistances[i] = meanDist;
-            densities[i] = std::exp(-meanDist * 2.f);
+            densities[i] = std::exp(-meanDist * DENSITY_EXP_SCALE);
         }
     }
 
@@ -156,6 +188,8 @@ public:
         smoothedFreq.resize(Nmax, 0.0);
         densities.resize(Nmax, 0.0);
         triggerAccumulator.resize(Nmax, 0.0);
+		triggerRate.resize(Nmax, 10.0);
+		boidOutputs.resize(Nmax);
 
         allocateBuffers(Nmax, 8);
 
@@ -187,72 +221,82 @@ public:
         *inactive = workingBuffer;
         activeBuffer.store(inactive, std::memory_order_release);
 
-        globalMeanDistance = aggregator.getGlobalMeanDistance();
+		globalMeanDistance.store(aggregator.getGlobalMeanDistance(), std::memory_order_release);
     }
 
-    void audioOut(ofSoundBuffer& buffer) override
+void audioOut(ofSoundBuffer& buffer) override
+{
+    ModalParamsBuffer* params = activeBuffer.load(std::memory_order_acquire);
+
+    applyModalParams(*params);
+
+    double globalDist = globalMeanDistance.load(std::memory_order_acquire);
+
+    const double mix = TRIGGER_MIX;
+    const double maxRate = TRIGGER_MAX_RATE;
+    const double minRate = TRIGGER_MIN_RATE;
+
+    for (int j = 0; j < N; j++)
     {
-        ModalParamsBuffer* params = activeBuffer.load(std::memory_order_acquire);
+        double meanDist = aggregator.getMeanDistance(j);
 
-        applyModalParams(*params);
+        double adaptive = meanDist / (globalDist + 1e-9);
+        double absolute = meanDist / ABSOLUTE_DISTANCE_SCALE;
 
-        double globalDist = globalMeanDistance;
+        double relative = mix * adaptive + (1.0 - mix) * absolute;
 
-        for(size_t i=0;i<buffer.getNumFrames();i++)
+        double compression = std::clamp(1.0 - relative, 0.0, 1.0);
+
+        double rate = minRate + (maxRate - minRate) * std::pow(compression, TRIGGER_CURVE_EXPONENT);
+
+        triggerRate[j] = rate;
+    }
+
+    for(size_t i = 0; i < buffer.getNumFrames(); i++)
+    {
+        for (int j = 0; j < N; j++)
         {
-			for (int j = 0; j < N; j++)
-			{
-				double meanDist = aggregator.getMeanDistance(j);
+            triggerAccumulator[j] += triggerRate[j] / SAMPLERATE;
 
-			    double adaptive = meanDist / (globalDist + 1e-9);
-
-			    double absolute = meanDist / 600.0;
-
-			    double mix = 0.5;  
-
-			    double relative = mix * adaptive + (1.0 - mix) * absolute;
-
-			    double compression = std::clamp(1.0 - relative, 0.0, 1.0);
-
-			    double rate = 10.0 + (500.0 - 10.0) * pow(compression, 0.7);
-
-			    triggerAccumulator[j] += rate / SAMPLERATE;
-
-			    if (triggerAccumulator[j] >= 1.0)
-			    {
-				    triggerAccumulator[j] -= 1.0;
-
-				    modalBank2D.exciteSource(j, 0.1 + compression);
-			    }
-		    }
-
-            auto boidOutputs = modalBank2D.playMulti();
-
-            std::array<double,7> ambiFrame{};
-            ambiFrame.fill(0.0);
-
-            for(int j=0;j<N;j++)
+            if (triggerAccumulator[j] >= 1.0)
             {
-                glm::vec3 p = aggregator.getSpatialPos(j);
-                double az   = std::atan2(p.z,p.x);
-                double dist = std::clamp((double)glm::length(p),0.05,1.0);
+                triggerAccumulator[j] -= 1.0;
 
-                double gain = std::exp(-3.0*dist);
-
-                auto frame = ambiEnc.play(boidOutputs[j]*gain, az, dist);
-
-                for(int k=0;k<7;k++)
-                    ambiFrame[k] += frame[k];
-            }
-
-            for(int ch=0;ch<2;ch++)
-            {
-                 double sOut = ambiDec.play(ambiFrame, speakerAz[ch]);
-
-                 buffer[i*2+ch] = std::tanh(sOut) * 4.0;
+                modalBank2D.exciteSource(
+                    j,
+                    0.1 + (triggerRate[j] / maxRate)
+                );
             }
         }
+
+        modalBank2D.playMulti(boidOutputs);
+
+        std::array<double,7> ambiFrame{};
+        ambiFrame.fill(0.0);
+
+        for(int j = 0; j < N; j++)
+        {
+            glm::vec3 p = aggregator.getSpatialPos(j);
+
+            double az   = std::atan2(p.z, p.x);
+            double dist = std::clamp((double)glm::length(p), SPATIAL_DISTANCE_MIN, SPATIAL_DISTANCE_MAX);
+
+            double gain = std::exp(-SPATIAL_GAIN_EXP  * dist);
+
+            auto frame = ambiEnc.play(boidOutputs[j] * gain, az, dist);
+
+            for(int k = 0; k < 7; k++)
+                ambiFrame[k] += frame[k];
+        }
+
+        for(int ch = 0; ch < 2; ch++)
+        {
+            double sOut = ambiDec.play(ambiFrame, speakerAz[ch]);
+
+            buffer[i*2 + ch] = std::tanh(sOut) * OUTPUT_TANH_DRIVE;
+        }
     }
+}
 
     const std::vector<BoidState9D>& getBoids() const
     {
@@ -297,7 +341,7 @@ private:
 
     void computeModalParamsControl()
     {
-        const double smooth = 0.995;
+        const double smooth = FREQ_SMOOTHING;
 
         for(int j=0;j<N;j++)
         {
@@ -308,11 +352,11 @@ private:
 
             double radialHeight = 0.5*(r.y+1.0);
 
-            double radialCurve = pow(radialHeight,0.6);
+            double radialCurve = pow(radialHeight,FREQ_RADIAL_EXPONENT);
 
-            double targetFreq = 100.0 + (1000.0-100.0) * radialCurve * (1.0 + densities[j]*1.5);
+            double targetFreq = FREQ_MIN + (FREQ_MAX - FREQ_MIN) * radialCurve * (1.0 + densities[j] * FREQ_DENSITY_INFLUENCE);
 
-            targetFreq = std::clamp(targetFreq,100.0,1000.0);
+            targetFreq = std::clamp(targetFreq,FREQ_MIN,FREQ_MAX - FREQ_MIN);
 
             if(smoothedFreq[j] <= 0.0)
                 smoothedFreq[j] = targetFreq;
@@ -321,9 +365,9 @@ private:
 
             for(size_t m=0; m<workingBuffer.perBoid[j].freq.size(); m++)
             {
-                workingBuffer.perBoid[j].freq[m] = smoothedFreq[j]*(1.0+0.01*m);
-                workingBuffer.perBoid[j].bw[m] = 80.0*(1.0+0.2*m);
-                workingBuffer.perBoid[j].amp[m] = 0.3/(1.0+0.4*m);
+				workingBuffer.perBoid[j].freq[m] = smoothedFreq[j] * (1.0 + MODE_FREQ_SPREAD * m);
+				workingBuffer.perBoid[j].bw[m] = MODE_BW_BASE * (1.0 + MODE_BW_SPREAD * m);
+				workingBuffer.perBoid[j].amp[m] = MODE_AMP_BASE / (1.0 + MODE_AMP_DECAY * m);
             }
         }
     }
@@ -344,9 +388,11 @@ private:
     int Nmax = 0;
 
     std::vector<BoidState9D> boids;
+	std::vector<double> boidOutputs;
     std::vector<double> smoothedFreq;
     std::vector<double> densities;
     std::vector<double> triggerAccumulator;
+	std::vector<double> triggerRate;
 
     BoidAggregator aggregator;
     ModalBank2D modalBank2D;
@@ -361,5 +407,5 @@ private:
     ModalParamsBuffer workingBuffer;
 
     std::atomic<ModalParamsBuffer*> activeBuffer;
-    double globalMeanDistance = 1.0;
+    std::atomic<double> globalMeanDistance {1.0};
 };

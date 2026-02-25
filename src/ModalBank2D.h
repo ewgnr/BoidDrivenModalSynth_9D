@@ -67,21 +67,22 @@ public:
     }
 
     // Play all modes and return summed outputs per source
-    std::vector<double> playMulti()
+    void playMulti(std::vector<double>& sums)
     {
-        std::vector<double> sums(nodes.size(), 0.0);
+    const size_t numSources = nodes.size();
 
-        for (size_t i = 0; i < nodes.size(); i++) // per source
+    for (size_t i = 0; i < numSources; i++)
+        sums[i] = 0.0;
+
+	    for (size_t i = 0; i < numSources; i++) // per source
         {
             for (size_t j = 0; j < nodes[i].size(); j++) // per mode
             {
-                output[i][j] = nodes[i][j].play(excitation[i][j]);
-                sums[i] += output[i][j] * weights[i][j];
-                excitation[i][j] = 0.0;
+            output[i][j] = nodes[i][j].play(excitation[i][j]);
+            sums[i] += output[i][j] * weights[i][j];
+            excitation[i][j] = 0.0;
             }
         }
-
-        return sums;
     }
 
 	size_t getNumModes(size_t sourceIdx) const
