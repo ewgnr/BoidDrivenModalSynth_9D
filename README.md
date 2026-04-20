@@ -15,7 +15,7 @@ The nine dimensions are grouped into three functional subspaces.
 
 ## 1. Subspaces & Dimensional Structure
 
-``` cpp 
+``` text 
 | Subspace / Dimensions | Interpretation in System          | Sonic Role / Control Function                                                                                |
 | --------------------- | --------------------------------- | ------------------------------------------------------------------------------------------------------------ |
 | Subspace 1 (dims 0–2) | Primary spatial projection vector | Defines spatial direction used for frequency mapping (via r.y), azimuth, and distance-based spatialization   |
