@@ -1,63 +1,74 @@
-# Adaptive 9D Boid Sound Engine – Ausführliche Dokumentation
+# Adaptive 9D Boid Sound Engine – Detailed Documentation
 
-Die Klangsynthese basiert auf einem Modal-Synthese-Verfahren, gesteuert durch eine neundimensionale Schwarmsimulation.  
-Die Erweiterung auf neun Dimensionen ermöglicht eine funktionale Differenzierung des Zustandsraums und erlaubt gezielte Kontrolle über spektrale, dynamische, räumliche und ereignisbasierte Eigenschaften des Klangfeldes.
+The sound synthesis is based on a modal synthesis system driven by a nine-dimensional swarm simulation.
+Extending the system to nine dimensions enables a functional decomposition of the state space and allows controlled mapping of spectral, dynamic, spatial, and event-based properties of the sound field.
 
-Anstelle klassischer Masse-Feder-Dämpfer-Modelle werden resonante, bandbegrenzte Modes eingesetzt.  
-Jeder Mode besteht aus mehreren parametrisierten Resonatoren, deren Frequenz, Bandbreite und Amplitude kontinuierlich angepasst werden.  
-Physikalische Kopplungsmatrizen werden nicht berechnet; Interaktion erfolgt indirekt über gemeinsame Anregung und parameterbasierte Transformation, wodurch numerische Instabilitäten vermieden werden und ein kontrollierbares, komplexes Resonanzverhalten entsteht.
+Instead of classical mass–spring–damper systems, the engine uses resonant, band-limited modal filters.
+Each mode consists of multiple parameterized resonators whose frequency, bandwidth, and amplitude are continuously updated.
 
-Jeder Mode ist einem Boid des Schwarms zugeordnet und wird aus dessen neundimensionalem Zustandsvektor abgeleitet.  
-Die neun Dimensionen werden in drei funktionale Subräume gegliedert.
+No physical coupling matrices are computed. Interaction emerges indirectly through shared excitation and parameter-driven modulation, which avoids numerical instability while producing a stable and complex resonant field.
 
----
-
-## 1. Subräume & Dimensionen
-
-| Subraum / Dimensionen | Physikalische Bedeutung | Klangliche Wirkung / Steuerparameter |
-|----------------------|-----------------------|-------------------------------------|
-| Subspace 1 (dims 0–2) | Radialvektor r, normiert + kinetische Energie | Grundfrequenz über r.y, Detuning höherer Modes, Azimut & Distanz für Ambisonics; Geschwindigkeit → zusätzliche Modulation |
-| Subspace 2 (dims 3–5) | Tangential-/Seitwärtsvektor t1, orthogonal zu r | Moduliert Amplitude (ampChaotic), Bandwidth, diffuse/chaotische Energie; beeinflusst spektrale Ausdehnung |
-| Subspace 3 (dims 6–8) | Normalenvektor t2 = r × t1, Länge = Curvature | Detuning (chaotische Harmonien), spektrale Breite; moduliert harmonische Struktur |
-
-**Lokale Nachbarschaft / Dichte:**  
-- Abstand zu Nachbarn innerhalb definierter Subräume  
-- Steuert Triggerwahrscheinlichkeit, Amplitude-Lift, Bandwidth-Lift, spektrale Verdichtung; skaliert mit Flow & Curvature  
-
-**Trigger / Envelope:**  
-- Ereignisbasierte Anregung abhängig von Dichte & Geschwindigkeit  
-- LinearEnvelope moduliert Rauschsignal → regt Modalbank an  
-- Attack/Decay abhängig von Dichte, Peak von Geschwindigkeit  
-
-**Velocity-Modulation:** Nur der radiale Subraum moduliert energetische Parameter direkt (Amplitude, Detuning).  
-
-**Subräume einfrieren:** Einzelne Subräume können temporär stabilisiert werden → gezielte Reduktion klanglicher Komplexität.
+Each mode is assigned to a boid and derived from its nine-dimensional state vector.
+The nine dimensions are grouped into three functional subspaces.
 
 ---
 
-## 2. Frenet-Frame-Logik pro Boid
+## 1. Subspaces & Dimensional Structure
 
-Jeder Boid wird mathematisch ähnlich einem Frenet-Frame interpretiert.
+``` cpp 
+| Subspace / Dimensions | Interpretation in System          | Sonic Role / Control Function                                                                                |
+| --------------------- | --------------------------------- | ------------------------------------------------------------------------------------------------------------ |
+| Subspace 1 (dims 0–2) | Primary spatial projection vector | Defines spatial direction used for frequency mapping (via r.y), azimuth, and distance-based spatialization   |
+| Subspace 2 (dims 3–5) | Secondary latent vector           | Contributes to spatial position mixing via orthogonal projection; affects aggregated spatial field structure |
+| Subspace 3 (dims 6–8) | Tertiary latent vector            | Contributes to additional spatial variation through weighted subspace blending                               |
+```
 
-### 2.1 Radialvektor r (dims 0–2)
+**Local Neighborhood / Density**  
+- Density is computed from average distances in aggregated spatial space
+- Implemented as an exponential decay of mean distance
+- Acts as a global modulation factor for: frequency scaling, trigger rate, spectral density
+
+**Trigger / Event System**
+- Event-based excitation derived from distance relationships
+- Deterministic accumulator-based triggering mechanism
+- Trigger rate depends on local vs global spatial distribution
+
+Key behavior:
+- dense regions → higher excitation rate
+- sparse regions → lower excitation rate
+
+**Velocity Influence** 
+Velocity is stored but only weakly contributes to the system.
+The primary control structure is spatial (position-based), not dynamic (velocity-based).
+
+**Subspace Freezing** 
+Subspaces can be conceptually stabilized (in analysis or parameter control) to reduce complexity in the resulting sound field.
+
+---
+
+## 2. Spatial Interpretation Model
+
+Each boid is interpreted as a structured spatial feature rather than a physical trajectory.
+
+### 2.1 Radial Vector r (dims 0–2)
 
 ```text
 glm::vec3 r(b.dims[0], b.dims[1], b.dims[2]);
 
-// Nur die Richtung zählt
 if (glm::length(r) > 1e-6)
 {
     r = glm::normalize(r);
 }
 ```
-- Klanglich: r.y → Grundfrequenz, Geschwindigkeit → zusätzliche Tonhöhenmodulation
+- Only direction is relevant
+- r.y is used for frequency mapping
+- Defines primary spatial orientation for the sound field
 
- ### 2.2 Tangentialvektor t1 (dims 3–5)
+ ### 2.2 Tangential Vector t1 (dims 3–5)
 
 ```text
 glm::vec3 t1(b.dims[3], b.dims[4], b.dims[5]);
 
-// Orthogonal zu r projizieren
 t1 -= glm::dot(t1, r) * r;
 
 double flow = glm::length(t1);
@@ -71,10 +82,11 @@ else
     t1 = glm::vec3(0.0f);
 }
 ```
-- Maß tangentialer Energie = flow
-- Klanglich: steigert Amplitude & Bandwidth, diffuses Timbre
+- Represents secondary spatial variation
+- flow = magnitude of orthogonal component
+- Influences spectral width and amplitude modulation
 
-### 2.3 Normalenvektor t2 (dims 6–8)
+### 2.3 Normal Vector t2 (dims 6–8)
 
 ```text
 glm::vec3 t2 = glm::cross(r, t1);
@@ -86,60 +98,55 @@ if (curvature > 1e-6)
     t2 = glm::normalize(t2);
 }
 ```
-- Maß für Rotations-/Planarenergie = curvature
-- Klanglich: moduliert Detuning, chaotische / breitere Klanganteile
+- Derived orthogonal vector between r and t1
+- curvature is a measure of spatial deviation
+- influences detuning and spectral dispersion
 
-### 2.4 Lokale Dichte (density)
+### 2.4 Density Field
 
-- Berechnet über Abstände zu Nachbarn im vollständigen 9D-Zustandsraum (alle drei funktionalen Subräume).
-- Emergenter kollektiver Parameter, der folgende Klangparameter moduliert:  
-  - Triggerwahrscheinlichkeit  
-  - Frequenzlift  
-  - Amplitude  
-  - Harmonische Stabilität / Bandwidth Lift
-- Density wirkt als globaler Skalierungsfaktor auf spektrale, dynamische und ereignisbasierte Prozesse.
+Density is computed over the full aggregated spatial system.
+It acts as a global emergent parameter controlling:
+- trigger probability
+- frequency lift
+- amplitude scaling
+- spectral bandwidth expansion
 
 ---
 
-## 3. Frequenz-, Amplituden-, Bandwidth- & Detuning-Berechnung
+## 3. Frequency, Amplitude, Bandwidth & Detuning Model
 
 ```text
-double radialHeight = 0.5 * (r.y + 1.0); // [-1,1] -> [0,1]
+double radialHeight = 0.5 * (r.y + 1.0); // [-1,1] → [0,1]
+
 double density = densities[j];
 
-double speed = glm::length(glm::vec3(
-  b.velocity[0],
-  b.velocity[1],
-  b.velocity[2]
-));
-
 double radialCurve = pow(radialHeight, 0.6);
+
 double densityLift = 1.0 + density * 1.5;
 
-double targetFreq = preset.minFreq +
-  (preset.maxFreq - preset.minFreq) * radialCurve * densityLift;
+double targetFreq = FREQ_MIN +
+    (FREQ_MAX - FREQ_MIN) * radialCurve * densityLift;
 
-targetFreq = std::clamp(targetFreq, preset.minFreq, preset.maxFreq);
+targetFreq = std::clamp(targetFreq, FREQ_MIN, FREQ_MAX);
 
 smoothedFreq[j] = 0.995 * smoothedFreq[j] + 0.005 * targetFreq;
 ```
-- Radialer Subraum → Grundfrequenz  
-- Dichte & Flow → Amplitude, Bandwidth  
-- Curvature → Detuning, chaotische Anteile  
-- Höhere Modi → diffuser, leiser, leicht detuned → komplexe Klangtextur  
+- radial position defines base pitch structure
+- density increases spectral energy and brightness
+- smooth interpolation ensures temporal stability  
 
-### Amplitude
+### Amplitude Model
 
 ```text
 double ampCinematic = 0.4 * (1.0 - density);
 double ampChaotic = 0.8 * density * flow;
 
-double ampBase = preset.minAmp +
-  (preset.maxAmp - preset.minAmp) * (ampCinematic + ampChaotic);
+double ampBase = FREQ_MIN +
+    (FREQ_MAX - FREQ_MIN) * (ampCinematic + ampChaotic);
 
-ampBase = std::clamp(ampBase, preset.minAmp, preset.maxAmp);
+ampBase = std::clamp(ampBase, FREQ_MIN, FREQ_MAX);
 ```
-### Bandwidth
+### Bandwidth Model
 
 ```text
 double bwTonal = 60.0;
@@ -147,84 +154,91 @@ double bwNoise = 500.0;
 double bwMix = density * flow;
 
 double baseBandwidth = bwTonal + (bwNoise - bwTonal) * bwMix;
-baseBandwidth *= preset.bandwidthScale;
+baseBandwidth *= bandwidthScale;
 ```
-### Detuning
+### Detuning Model
 
 ```text
 double detuneClean = 0.001;
 double detuneChaos = 0.05;
 
-double detuneAmt = (detuneClean + (detuneChaos - detuneClean) *
-  (0.7 * density + 0.3 * curvature)) * preset.detuneScale;
+double detuneAmt =
+    (detuneClean + (detuneChaos - detuneClean) *
+    (0.7 * density + 0.3 * curvature)) * detuneScale;
+```
+### Modal Parameter Assignment
 
-Parametrisierung Modalbank pro Boid & Mode
-
-for(size_t m = 0; m < numModes; m++)
+```text
+for (size_t m = 0; m < numModes; m++)
 {
-  double frq = smoothedFreq[j] * (1.0 + detuneAmt * m);
-  double bw = baseBandwidth * (1.0 + 0.3 * m);
-  double amp = ampBase / (1.0 + 0.4 * m);
+    double frq = smoothedFreq[j] * (1.0 + detuneAmt * m);
+    double bw  = baseBandwidth * (1.0 + 0.3 * m);
+    double amp = ampBase / (1.0 + 0.4 * m);
 
-  modalBank2D.setParams(j, m, frq, bw, amp);
+    modalBank2D.setParams(j, m, frq, bw, amp);
 }
 ```
-- Höhere Modi → diffuser, leiser, leicht detuned → komplexe Klangtextur
-  
----
-
-## 4. Trigger & Envelope
-
-- Ereignisbasierte Anregung abhängig von Dichte und radialem Flow  
-- LinearEnvelope moduliert ein Rauschsignal zur Anregung der Resonatoren  
-- Hüllkurve skalierbar in Intensität und Dauer → impulsartig oder flächig  
+- higher modes → more diffuse spectral structure
+- detuning increases with mode index
+- amplitude decreases per mode
 
 ---
 
-## 5. Ambisonic Mapping & Stereo
+## 4. Trigger & Envelope System
 
-- Boid → Azimut & Distanz (radialer Subraum)  
-- Ambisonics-Codierung → 7-Kanal 2D Ambisonics  
-- Distanzabhängiger Gain: `exp(-3 * dist)`  
-- Summation aller Boids → Gesamt-Ambisonic-Rahmen  
-- Ambisonics-Decodierung → Stereo (L/R)  
-- Soft-Clipping: `tanh()`  
+- Event-based excitation derived from spatial density and distance structure
+- Deterministic accumulator-based trigger mechanism
+- Excitation drives modal resonance bank directly
+- Envelope behavior depends on density-driven energy distribution 
+
+---
+
+## 5. Spatial Encoding & Stereo Output
+
+- Boid position mapped to azimuth and distance
+- Distance controls attenuation via exponential decay: `exp(-3 * dist)`  
+- Each boid is encoded into a 7-channel circular harmonic field
+- Fields are summed into a global spatial buffer
+- Decoded into stereo output (L/R)
+- Final output uses soft saturation: `tanh()`  
 
 ---
 
 ## 6. Signalfluss-Diagramm (ASCII)
+
 ```text
-[SwarmOSCReceiver]
+[Swarm System]
       │
-      │ (Boid.position[0..8], Boid.velocity[0..8])
+      │ (9D Boid State)
       ▼
-[BoidAggregator] ──> spatialPos[vec3], densities[float]
+[Boid Aggregator]
       │
-      ├───> Subspace 1 → radial r → Grundfrequenz, Azimut & Distanz
-      ├───> Subspace 2 → tangential t1 → Flow → Amplitude & Bandwidth
-      └───> Subspace 3 → normal t2 → Krümmung → Detuning, chaotische Anteile
+      ├── Subspace 1 → radial r → frequency + spatial direction
+      ├── Subspace 2 → t1 → flow → amplitude + bandwidth
+      └── Subspace 3 → t2 → curvature → detuning
       ▼
-[BoidToAmbi2D] ──> azimuthRad, distance
+[Density Field]
       ▼
-[AmbiEncode2D] ──> 7-channel 2D ambisonics
+[ModalBank2D]
+      ├── Multi-mode resonators per boid
+      ├── frequency / bandwidth / amplitude control
+      └── event-based excitation
       ▼
-[ModalBank2D] (N Boids × M Modes)
-      ├──> ModalFilter: Frq, Q, Amp per Mode
-      ├──> Ereignisbasierte Excitation (Envelope)
-      └──> Output summiert pro Boid
+[AmbiEncode2D]
       ▼
-[AmbiDecode2D] ──> Stereo (L/R)
+[AmbiDecode2D]
       ▼
-[Audio Output]
+[Stereo Output]
 ```
 ### 7. Legende / Mapping
 
-| Element               | Funktion                                                       |
-|----------------------|----------------------------------------------------------------|
-| r                     | Grundfrequenz, räumliche Position (Azimut/Distanz), Detuning  |
-| t1                    | Flow → Amplitude & Bandwidth                                   |
-| t2                    | Detuning, chaotische Harmonische                               |
-| Density               | Triggerwahrscheinlichkeit, harmonische Stabilität, Bandwidth Lift |
-| Envelope              | Ereignisbasierte Energie → Anregung der Resonatoren           |
-| Modalbank             | Modes erhalten Frq, Amp, Bandwidth, Detuning                  |
-| AmbiEncode/Decode 2D  | Ambisonics → Stereo-Raumabbildung                              |
+```text
+| Element           | Function                                     |
+| ----------------- | -------------------------------------------- |
+| r                 | Frequency base, spatial orientation, azimuth |
+| t1                | Spectral width, amplitude modulation         |
+| t2                | Detuning and spectral instability            |
+| density           | Global excitation and spectral energy        |
+| modal bank        | Resonant synthesis structure                 |
+| encoding/decoding | Circular harmonic spatial projection         |
+```
