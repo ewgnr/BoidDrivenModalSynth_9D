@@ -113,69 +113,37 @@ It acts as a global emergent parameter controlling:
 
 ---
 
-## 3. Frequency, Amplitude, Bandwidth & Detuning Model
+## 3. Spectral Parameter Generation (Per Boid)
+
+### Frequency Mapping
 
 ```text
-double radialHeight = 0.5 * (r.y + 1.0); // [-1,1] → [0,1]
-
-double density = densities[j];
-
-double radialCurve = pow(radialHeight, 0.6);
-
-double densityLift = 1.0 + density * 1.5;
-
-double targetFreq = FREQ_MIN +
-    (FREQ_MAX - FREQ_MIN) * radialCurve * densityLift;
-
-targetFreq = std::clamp(targetFreq, FREQ_MIN, FREQ_MAX);
-
-smoothedFreq[j] = 0.995 * smoothedFreq[j] + 0.005 * targetFreq;
+radialHeight → radialCurve → densityLift → targetFreq → smoothedFreq
 ```
-- radial position defines base pitch structure
-- density increases spectral energy and brightness
-- smooth interpolation ensures temporal stability  
 
-### Amplitude Model
+### Amplitude Mapping
 
 ```text
-double ampCinematic = 0.4 * (1.0 - density);
-double ampChaotic = 0.8 * density * flow;
-
-double ampBase = FREQ_MIN +
-    (FREQ_MAX - FREQ_MIN) * (ampCinematic + ampChaotic);
-
-ampBase = std::clamp(ampBase, FREQ_MIN, FREQ_MAX);
+density + flow → energetic mix → ampBase
 ```
-### Bandwidth Model
+### Bandwidth Mapping
 
 ```text
-double bwTonal = 60.0;
-double bwNoise = 500.0;
-double bwMix = density * flow;
-
-double baseBandwidth = bwTonal + (bwNoise - bwTonal) * bwMix;
-baseBandwidth *= bandwidthScale;
+density * flow → tonal/noisy interpolation → baseBandwidth
 ```
-### Detuning Model
+### Detuning Mapping
 
 ```text
-double detuneClean = 0.001;
-double detuneChaos = 0.05;
-
-double detuneAmt =
-    (detuneClean + (detuneChaos - detuneClean) *
-    (0.7 * density + 0.3 * curvature)) * detuneScale;
+density + curvature → instability factor → detuneAmt
 ```
 ### Modal Parameter Assignment
 
 ```text
-for (size_t m = 0; m < numModes; m++)
+for (m)
 {
-    double frq = smoothedFreq[j] * (1.0 + detuneAmt * m);
-    double bw  = baseBandwidth * (1.0 + 0.3 * m);
-    double amp = ampBase / (1.0 + 0.4 * m);
-
-    modalBank2D.setParams(j, m, frq, bw, amp);
+    frq = baseFreq * (1 + detuneAmt * m);
+    bw  = baseBW   * (1 + 0.3 * m);
+    amp = baseAmp  / (1 + 0.4 * m);
 }
 ```
 - higher modes → more diffuse spectral structure
