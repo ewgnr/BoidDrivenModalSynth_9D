@@ -37,11 +37,11 @@ Key behavior:
 - dense regions → higher excitation rate
 - sparse regions → lower excitation rate
 
-**Velocity Influence** 
+**Velocity Influence:** 
 Velocity is stored but only weakly contributes to the system.
 The primary control structure is spatial (position-based), not dynamic (velocity-based).
 
-**Subspace Freezing** 
+**Subspace Freezing:** 
 Subspaces can be conceptually stabilized (in analysis or parameter control) to reduce complexity in the resulting sound field.
 
 ---
