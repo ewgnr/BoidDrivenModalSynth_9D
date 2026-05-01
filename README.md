@@ -1,212 +1,303 @@
-# Adaptive 9D Boid Sound Engine – Detailed Documentation
+# Adaptive 9D Boid Sound Engine — Technical Specification
 
-The sound synthesis is based on a modal synthesis system driven by a nine-dimensional swarm simulation.
-Extending the system to nine dimensions enables a functional decomposition of the state space and allows controlled mapping of spectral, dynamic, spatial, and event-based properties of the sound field.
+## 01. Overview
 
-Instead of classical mass–spring–damper systems, the engine uses resonant, band-limited modal filters.
-Each mode consists of multiple parameterized resonators whose frequency, bandwidth, and amplitude are continuously updated.
+The Adaptive 9D Boid Sound Engine is a swarm-driven modal synthesis system in which a population of agents (boids) is represented by a 9-dimensional feature vector. The system does not simulate physical forces; instead, it constructs a structured feature space that is continuously mapped into:
 
-No physical coupling matrices are computed. Interaction emerges indirectly through shared excitation and parameter-driven modulation, which avoids numerical instability while producing a stable and complex resonant field.
+- 3D spatial field (for sound placement)
+- density field (for excitation and spectral control)
+- temporal excitation field (trigger system)
+- modal synthesis layer (resonant sound generation)
 
-Each mode is assigned to a boid and derived from its nine-dimensional state vector.
-The nine dimensions are grouped into three functional subspaces.
+Sound is generated through independent resonant filters (modal bank) rather than physical coupling systems. Interaction between agents emerges implicitly through shared statistical fields (distance, density, and global normalization).
 
 ---
 
-## 1. Subspaces & Dimensional Structure
+## 02. 9D State Representation
+
+Each boid consists of:
+
+- position[0..8] (9D feature vector)
+- velocity[0..8] (9D feature vector)
+
+The 9D space is partitioned into three independent 3D subspaces:
 
 ``` text 
-| Subspace / Dimensions | Interpretation in System          | Sonic Role / Control Function                                                                                |
-| --------------------- | --------------------------------- | ------------------------------------------------------------------------------------------------------------ |
-| Subspace 1 (dims 0–2) | Primary spatial projection vector | Defines spatial direction used for frequency mapping (via r.y), azimuth, and distance-based spatialization   |
-| Subspace 2 (dims 3–5) | Secondary latent vector           | Contributes to spatial position mixing via orthogonal projection; affects aggregated spatial field structure |
-| Subspace 3 (dims 6–8) | Tertiary latent vector            | Contributes to additional spatial variation through weighted subspace blending                               |
+| Subspace | Dimensions | Interpretation                      |
+| -------- | ---------- | ----------------------------------- |
+| S1       | 0–2        | Primary spatial feature vector      |
+| S2       | 3–5        | Secondary structural feature vector |
+| S3       | 6–8        | Tertiary structural feature vector  |
 ```
-
-**Local Neighborhood / Density**  
-- Density is computed from average distances in aggregated spatial space
-- Implemented as an exponential decay of mean distance
-- Acts as a global modulation factor for: frequency scaling, trigger rate, spectral density
-
-**Trigger / Event System**
-- Event-based excitation derived from distance relationships
-- Deterministic accumulator-based triggering mechanism
-- Trigger rate depends on local vs global spatial distribution
-
-Key behavior:
-- dense regions → higher excitation rate
-- sparse regions → lower excitation rate
-
-**Velocity Influence:** 
-Velocity is stored but only weakly contributes to the system.
-The primary control structure is spatial (position-based), not dynamic (velocity-based).
-
-**Subspace Freezing:** 
-Subspaces can be conceptually stabilized (in analysis or parameter control) to reduce complexity in the resulting sound field.
+These subspaces are not orthogonalized and are not treated as geometric basis vectors. They are combined linearly.
 
 ---
 
-## 2. Spatial Interpretation Model
+## 03. Spatial Aggregation Model
 
-Each boid is interpreted as a structured spatial feature rather than a physical trajectory.
+**3.1 Subspace Fusion**
 
-### 2.1 Radial Vector r (dims 0–2)
-
-```text
-glm::vec3 r(b.dims[0], b.dims[1], b.dims[2]);
-
-if (glm::length(r) > 1e-6)
-{
-    r = glm::normalize(r);
-}
-```
-- Only direction is relevant
-- r.y is used for frequency mapping
-- Defines primary spatial orientation for the sound field
-
- ### 2.2 Tangential Vector t1 (dims 3–5)
+Each boid’s spatial position is computed as a weighted sum of its three subspaces:
 
 ```text
-glm::vec3 t1(b.dims[3], b.dims[4], b.dims[5]);
-
-t1 -= glm::dot(t1, r) * r;
-
-double flow = glm::length(t1);
-
-if (flow > 1e-6)
-{
-    t1 = glm::normalize(t1);
-}
-else
-{
-    t1 = glm::vec3(0.0f);
-}
+spatialPos[i] =
+    w1 * pos[0..2] +
+    w2 * pos[3..5] +
+    w3 * pos[6..8]
 ```
-- Represents secondary spatial variation
-- flow = magnitude of orthogonal component
-- Influences spectral width and amplitude modulation
 
-### 2.3 Normal Vector t2 (dims 6–8)
+Weights are normalized per system configuration.
+
+**3.2 Temporal Smoothing**
+
+Spatial positions are low-pass filtered:
 
 ```text
-glm::vec3 t2 = glm::cross(r, t1);
-
-double curvature = glm::length(t2);
-
-if (curvature > 1e-6)
-{
-    t2 = glm::normalize(t2);
-}
+spatialPos(t) = α * spatialPos(t-1) + (1 - α) * fusedPosition
 ```
-- Derived orthogonal vector between r and t1
-- curvature is a measure of spatial deviation
-- influences detuning and spectral dispersion
 
-### 2.4 Density Field
-
-Density is computed over the full aggregated spatial system.
-It acts as a global emergent parameter controlling:
-- trigger probability
-- frequency lift
-- amplitude scaling
-- spectral bandwidth expansion
+This stabilizes the spatial field and reduces jitter in synthesis parameters.
 
 ---
 
-## 3. Spectral Parameter Generation (Per Boid)
+ ### 04. Torus Wrapping Model
 
-### Frequency Mapping
+All spatial computations operate in a periodic domain:
 
-```text
-radialHeight → radialCurve → densityLift → targetFreq → smoothedFreq
-```
-
-### Amplitude Mapping
+- positions are wrapped into a toroidal space of size 2 units
+- differences are wrapped to ensure shortest-path consistency
 
 ```text
-density + flow → energetic mix → ampBase
+p -= round(p / 2) * 2;
 ```
-### Bandwidth Mapping
 
-```text
-density * flow → tonal/noisy interpolation → baseBandwidth
-```
-### Detuning Mapping
+This applies to:
 
-```text
-density + curvature → instability factor → detuneAmt
-```
-### Modal Parameter Assignment
-
-```text
-for (m)
-{
-    frq = baseFreq * (1 + detuneAmt * m);
-    bw  = baseBW   * (1 + 0.3 * m);
-    amp = baseAmp  / (1 + 0.4 * m);
-}
-```
-- higher modes → more diffuse spectral structure
-- detuning increases with mode index
-- amplitude decreases per mode
+- position
+- velocity reconstruction
+- inter-boid distances
 
 ---
 
-## 4. Trigger & Envelope System
+### 05. Density Model
 
-- Event-based excitation derived from spatial density and distance structure
-- Deterministic accumulator-based trigger mechanism
-- Excitation drives modal resonance bank directly
-- Envelope behavior depends on density-driven energy distribution 
+Each boid’s density is computed from its average wrapped distance to all other boids:
+
+```text
+meanDist[i] = average distance to all j ≠ i
+density[i] = exp(-meanDist[i] * DENSITY_EXP_SCALE)
+```
+
+Properties:
+
+- density is local (per boid)
+- no explicit global density field exists
+- a separate global mean distance is computed for normalization
+
+Interpretation:
+
+- dense clustering → high density values
+- sparse distribution → low density values
+
+Density is used as a control modulation factor, not a spatial field.
 
 ---
 
-## 5. Spatial Encoding & Stereo Output
+### 06. Velocity Model
 
-- Boid position mapped to azimuth and distance
-- Distance controls attenuation via exponential decay: `exp(-3 * dist)`  
-- Each boid is encoded into a 7-channel circular harmonic field
-- Fields are summed into a global spatial buffer
-- Decoded into stereo output (L/R)
-- Final output uses soft saturation: `tanh()`  
+Velocity is reconstructed using torus-consistent differences:
+
+```text
+velocity[i] = wrap(spatialPos[i] - previousSpatialPos[i])
+```
+
+Velocity is used as a secondary excitation descriptor, producing:
+
+- spectral instability
+- amplitude variation
+- mode-level modulation
+
+Velocity does not define motion trajectories in a physical sense; it modulates spectral texture.
 
 ---
 
-## 6. Signalfluss-Diagramm (ASCII)
+### 07. Trigger System (Event Excitation)
+
+Each boid has an independent deterministic accumulator:
 
 ```text
-[Swarm System]
-      │
-      │ (9D Boid State)
-      ▼
-[Boid Aggregator]
-      │
-      ├── Subspace 1 → radial r → frequency + spatial direction
-      ├── Subspace 2 → t1 → flow → amplitude + bandwidth
-      └── Subspace 3 → t2 → curvature → detuning
-      ▼
-[Density Field]
-      ▼
-[ModalBank2D]
-      ├── Multi-mode resonators per boid
-      ├── frequency / bandwidth / amplitude control
-      └── event-based excitation
-      ▼
-[AmbiEncode2D]
-      ▼
-[AmbiDecode2D]
-      ▼
-[Stereo Output]
+acc[i] += triggerRate[i] / sampleRate
+if acc[i] ≥ 1:
+    excite modal bank
+    acc[i] -= 1
 ```
-### 7. Legende / Mapping
+
+**Trigger rate computation:**
+
+Trigger rate depends on relative spatial ratios:
 
 ```text
-| Element           | Function                                     |
-| ----------------- | -------------------------------------------- |
-| r                 | Frequency base, spatial orientation, azimuth |
-| t1                | Spectral width, amplitude modulation         |
-| t2                | Detuning and spectral instability            |
-| density           | Global excitation and spectral energy        |
-| modal bank        | Resonant synthesis structure                 |
-| encoding/decoding | Circular harmonic spatial projection         |
+adaptive  = meanDist[i] / globalMeanDist
+absolute  = meanDist[i] / ABSOLUTE_DISTANCE_SCALE
+
+relative  = mix * adaptive + (1 - mix) * absolute
+compression = clamp(1 - relative, 0, 1)
+
+triggerRate = minRate + (maxRate - minRate) * compression^exponent
 ```
+
+**Key property:**
+
+Triggering is driven by relative structure, not absolute density.
+
+---
+
+### 08 Modal Synthesis System
+
+Each boid controls an independent modal bank:
+
+- N modes per boid (default: 8)
+- each mode is a resonant filter
+
+**Mode parameterization:**
+
+For mode index m:
+
+```text
+freq[m] = baseFreq * (1 + spread * m + jitter)
+bw[m]   = baseBW * (1 + 0.3 * m)
+amp[m]  = baseAmp / (1 + decay * m)
+```
+
+where:
+
+- baseFreq is derived from spatial position + density
+- jitter is a nonlinear term driven by velocity and mode index
+
+```text
+jitter = 0.02 * (1 + energy) * sin(m)
+```
+
+**Interpretation:**
+
+- higher modes → broader, weaker spectral components
+- velocity increases spectral instability
+- density increases spectral brightness
+
+### 09. Modal Excitation Model
+
+Each trigger event injects energy into all modes of a boid:
+
+```text
+excitation[i][m] += triggerEnergy
+```
+
+Energy is reset after each audio frame.
+
+Modal output is summed per boid:
+
+```text
+boidOutput[i] = Σ modeOutput[i][m] * weight[m]
+```
+
+---
+
+### 10. Spatial Audio Encoding
+
+**Encoding:**
+
+```text
+azimuth = atan2(x, z)
+distance = clamp(|position|)
+
+gain = 1 / (1 + k * distance)
+```
+
+The signal is encoded into a 3rd-order ambisonic field (7 channels):
+
+- W (omnidirectional)
+- X/Y/Z (first order)
+- higher-order components (2nd + 3rd order)
+
+---
+
+### 11. Ambisonic Decoding
+
+The ambisonic field is decoded into stereo:
+
+```text
+stereo = decode(ambiField, speakerAngle)
+```
+
+Two virtual speaker positions are used for left/right output.
+
+---
+
+### 12. Output Stage
+
+Final output is saturated using soft clipping:
+
+```text
+output = tanh(signal * drive)
+```
+
+This prevents modal summation from exceeding stable amplitude bounds.
+
+---
+
+### 13. System Architecture
+
+```text
+[OSC Input]
+     ↓
+[Boid State: 9D vectors]
+     ↓
+[Subspace Fusion (S1 + S2 + S3)]
+     ↓
+[Spatial Field (3D smoothed torus space)]
+     ↓
+ ┌──────────────────────────────┐
+ │ Density Computation          │
+ │ Velocity Reconstruction      │
+ │ Distance Ratios             │
+ └──────────────────────────────┘
+     ↓
+[Trigger System (event-driven excitation)]
+     ↓
+[Modal Bank (per boid, multi-mode resonators)]
+     ↓
+[Audio Summation per Boid]
+     ↓
+[Ambisonic Encoding (3rd order)]
+     ↓
+[Ambisonic Decoding]
+     ↓
+[Stereo Output + tanh saturation]
+```
+ 
+---
+
+### 14. System Characteristics
+
+**Emergent behavior sources:**
+
+- ratio-based trigger system (relative geometry)
+- nonlinear modal jitter term
+- density-dependent excitation scaling
+- torus-wrapped spatial continuity
+- multi-mode spectral decay hierarchy 
+
+**Not present in implementation:**
+
+- no physical force simulation
+- no orthogonal 9D basis construction
+- no explicit coupling matrix between boids
+- no true geometric decomposition into r/t1/t2 vectors
+
+---
+
+### 15. Conceptual Summary
+
+The system is best described as:
+
+A torus-bound, feature-aggregated swarm system where 9D agent states are projected into a smoothed 3D spatial field and used to drive a distributed modal synthesis network. Sound emerges from statistically coupled excitation rather than physical interaction.
