@@ -1,0 +1,105 @@
+@startuml
+skinparam shadowing false
+skinparam sequenceMessageAlign center
+skinparam responseMessageBelowArrow true
+
+title Boid Audio System — Runtime Sequence
+
+actor OSC as osc
+participant "SwarmOSCReceiver" as receiver
+participant "ofApp" as app
+participant "AdaptiveBoidSoundEngine" as engine
+participant "BoidAggregator" as agg
+participant "ModalBank2D" as modal
+participant "Ambisonic Encode/Decode" as ambi
+participant "Audio Callback\n(ofSoundStream)" as audio
+
+' =========================
+' 1. OSC INPUT THREAD
+' =========================
+
+osc -> receiver : UDP message (/swarm/.../position or velocity)
+receiver -> receiver : parseMessage()
+receiver -> receiver : update Boid array
+
+note right of receiver
+Boid state updated asynchronously
+(no audio thread involvement)
+end note
+
+' =========================
+' 2. MAIN UPDATE LOOP
+' =========================
+
+app -> receiver : update()
+app -> engine : updateBoids(boids)
+
+engine -> agg : update(boids)
+
+agg -> agg : computeSpatialPositions()
+agg -> agg : computeDistancesAndDensity()
+agg -> agg : computeGlobalMean()
+
+engine -> engine : computeModalParamsControl()
+
+engine -> engine : write workingBuffer
+engine -> engine : swap activeBuffer (atomic)
+
+note right of engine
+Lock-free double buffer swap:
+audio thread reads stable snapshot
+end note
+
+' =========================
+' 3. AUDIO CALLBACK (real-time)
+' =========================
+
+audio -> engine : audioOut(buffer)
+
+engine -> engine : load activeBuffer
+
+engine -> modal : applyModalParams()
+
+loop each audio frame
+    engine -> modal : exciteSource() (triggered events)
+
+    modal -> modal : playMulti()
+    modal --> engine : boidOutputs[]
+
+    engine -> ambi : encode(audio + position)
+
+    ambi -> ambi : spatial encode (azimuth, distance)
+    ambi --> engine : ambisonic frame (7ch)
+
+    engine -> ambi : decode(frame, speakerAz)
+    ambi --> engine : stereo sample
+
+end
+
+engine -> audio : write samples (tanh + drive)
+
+' =========================
+' FEEDBACK NOTES
+' =========================
+
+note right of agg
+Key stabilization layer:
+- torus wrapping
+- smoothing (pos + scale)
+- epsilon distance fix
+end note
+
+note right of modal
+Stateful resonant system:
+- internal filter memory
+- excitation-driven energy
+end note
+
+note right of ambi
+Spatialization depends on:
+- normalized position
+- distance attenuation
+- azimuth mapping
+end note
+
+@enduml

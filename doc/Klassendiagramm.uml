@@ -1,0 +1,196 @@
+@startuml
+skinparam classAttributeIconSize 0
+
+' =========================
+' CORE DATA STRUCTURES
+' =========================
+
+class Boid {
+  +int index
+  +float position[9]
+  +float velocity[9]
+}
+
+class Subspace {
+  +array<int,3> dims
+  +float weight
+}
+
+' =========================
+' INPUT LAYER
+' =========================
+
+class SwarmOSCReceiver {
+  -ofxOscReceiver receiver
+  -vector<Boid> boids
+  -int swarmIndex
+
+  +setup(port)
+  +update()
+  +getBoids()
+  +getSwarmIndex()
+  +drawDebug()
+  +printMinMax()
+  -handleMessage(msg)
+}
+
+' =========================
+' SPATIAL ABSTRACTION
+' =========================
+
+class BoidAggregator {
+  -vector<Subspace> subspaces
+  -vector<glm::vec3> spatialPos
+  -vector<glm::vec3> prevSpatialPos
+  -vector<float> densities
+  -vector<float> meanDistances
+
+  -glm::vec3 normCenter
+  -float normScale
+  -double globalMeanDistance
+
+  +setup(maxBoids)
+  +update(boids)
+  +setSubspaces(s)
+
+  +getWrappedPos(i)
+  +getWrappedVelocity(i)
+  +getNormalizedPos(i)
+  +getDensity(i)
+  +getMeanDistance(i)
+  +getGlobalMeanDistance()
+
+  -computeSpatialPositions()
+  -computeDistancesAndDensity()
+  -computeGlobalMean()
+  -extractPos()
+}
+
+' =========================
+' SYNTHESIS CORE
+' =========================
+
+class ModalFilter {
+  -double frq
+  -double q
+  -double amp
+
+  +init(frq, q, amp)
+  +setParams(frq, q, amp)
+  +play(input)
+  +reset()
+}
+
+class ModalBank2D {
+  -vector<vector<ModalFilter>> nodes
+  -vector<vector<double>> excitation
+  -vector<vector<double>> output
+  -vector<vector<double>> weights
+
+  +setup(sources, modes, sampleRate)
+  +initRandom()
+  +setParams(source, mode, frq, q, amp)
+
+  +excite(source, mode, value)
+  +exciteSource(source, value)
+
+  +playMulti(sums)
+  +getOutputs()
+}
+
+' =========================
+' SPATIAL AUDIO
+' =========================
+
+class AmbiEncode2D {
+  +play(input, azimuth, distance)
+}
+
+class AmbiDecode2D {
+  +play(ambiFrame, speakerAz)
+}
+
+' =========================
+' CONTROL / ENGINE
+' =========================
+
+class AdaptiveBoidSoundEngine {
+  -int N
+  -int Nmax
+
+  -vector<Boid> boids
+  -vector<double> boidOutputs
+  -vector<double> smoothedFreq
+  -vector<double> densities
+  -vector<double> triggerRate
+
+  -BoidAggregator aggregator
+  -ModalBank2D modalBank2D
+  -AmbiEncode2D ambiEnc
+  -AmbiDecode2D ambiDec
+
+  -ModalParamsBuffer bufferA
+  -ModalParamsBuffer bufferB
+  -ModalParamsBuffer workingBuffer
+  -atomic<ModalParamsBuffer*> activeBuffer
+
+  -atomic<double> globalMeanDistance
+
+  +setup(maxBoids)
+  +updateBoids(boids)
+  +audioOut(buffer)
+
+  +getBoids()
+  +getBoidPosition(i)
+
+  -computeModalParamsControl()
+  -applyModalParams()
+  -allocateBuffers()
+}
+
+class ModalParamsBuffer {
+  +vector<ModalParams> perBoid
+}
+
+class ModalParams {
+  +vector<double> freq
+  +vector<double> bw
+  +vector<double> amp
+}
+
+' =========================
+' APP LAYER
+' =========================
+
+class ofApp {
+  -SwarmOSCReceiver swarm
+  -AdaptiveBoidSoundEngine engine
+  -ofSoundStream soundStream
+
+  +setup()
+  +update()
+  +draw()
+  +onSliderEvent()
+}
+
+' =========================
+' RELATIONSHIPS
+' =========================
+
+ofApp --> SwarmOSCReceiver
+ofApp --> AdaptiveBoidSoundEngine
+
+SwarmOSCReceiver --> Boid
+
+AdaptiveBoidSoundEngine --> BoidAggregator
+AdaptiveBoidSoundEngine --> ModalBank2D
+AdaptiveBoidSoundEngine --> AmbiEncode2D
+AdaptiveBoidSoundEngine --> AmbiDecode2D
+AdaptiveBoidSoundEngine --> ModalParamsBuffer
+AdaptiveBoidSoundEngine --> Boid
+
+BoidAggregator --> Subspace
+
+ModalBank2D --> ModalFilter
+
+@enduml

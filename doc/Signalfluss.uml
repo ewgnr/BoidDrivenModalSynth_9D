@@ -1,0 +1,108 @@
+@startuml
+skinparam shadowing false
+skinparam roundcorner 12
+skinparam ArrowColor #444
+skinparam defaultTextAlignment center
+
+title Boid Audio System — Signal Flow
+
+' =========================
+' INPUT
+' =========================
+
+rectangle "OSC INPUT\nSwarmOSCReceiver" as OSC
+
+rectangle "Boid State\n(position[9], velocity[9])" as BOIDS
+
+OSC --> BOIDS : UDP / OSC messages
+
+' =========================
+' SPATIAL PROCESSING
+' =========================
+
+rectangle "Boid Aggregator\n- subspace fusion\n- smoothing\n- torus wrap\n- normalization" as AGG
+
+BOIDS --> AGG : raw boids
+
+rectangle "Spatial Fields\n- spatialPos\n- prevSpatialPos\n- densities\n- mean distance" as FIELD
+
+AGG --> FIELD : computed geometry
+
+rectangle "Derived Signals\n- normalized position\n- wrapped velocity\n- density\n- global mean distance" as DERIVED
+
+FIELD --> DERIVED
+
+' =========================
+' CONTROL SIGNALS
+' =========================
+
+rectangle "Control Mapping\n(Frequency / Trigger Engine)" as CONTROL
+
+DERIVED --> CONTROL : spatial + motion features
+
+rectangle "Trigger System\nrate = f(distance, density)" as TRIG
+CONTROL --> TRIG
+
+rectangle "Modal Parameter Control\n(freq, bw, amp per boid/mode)" as MODCTRL
+CONTROL --> MODCTRL
+
+' =========================
+' SYNTHESIS CORE
+' =========================
+
+rectangle "ModalBank2D\n(per-boid resonant bank)" as MODBANK
+
+TRIG --> MODBANK : excitation impulses
+MODCTRL --> MODBANK : continuous parameters
+
+rectangle "Per-Boid Audio Signals" as AUDIO
+
+MODBANK --> AUDIO
+
+' =========================
+' SPATIALIZATION
+' =========================
+
+rectangle "Ambisonic Encoder (3rd order)\nencode azimuth + distance" as ENCODE
+
+AUDIO --> ENCODE
+
+DERIVED --> ENCODE : position (azimuth, distance)
+
+rectangle "Ambisonic Frame (7 channels)" as AMBI
+
+ENCODE --> AMBI
+
+rectangle "Ambisonic Decoder\n(per speaker azimuth)" as DECODE
+
+AMBI --> DECODE
+
+rectangle "Stereo Output" as OUT
+
+DECODE --> OUT
+
+' =========================
+' FEEDBACK NOTES
+' =========================
+
+note right of FIELD
+Key stability layer:
+- torus wrapping
+- smoothing (pos + scale)
+- epsilon distance fix
+end note
+
+note right of MODBANK
+Audio excitation is
+event-driven + continuous
+control modulation
+end note
+
+note right of ENCODE
+Spatialization depends on:
+- normalized position
+- distance attenuation
+- azimuth mapping
+end note
+
+@enduml

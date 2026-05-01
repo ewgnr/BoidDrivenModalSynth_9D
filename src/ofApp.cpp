@@ -13,37 +13,7 @@ ofxDatGuiSlider* ofApp::addBoundSlider(ofxDatGuiFolder* folder,
     return s;
 }
 
-//--------------------------------------------------------------
-std::vector<BoidState9D> convertTo9D(const std::vector<Boid>& swarmBoids)
-{
-    const float POSITION_SCALE = 70.0f;
-    const float VELOCITY_SCALE = 1.0f;
 
-    std::vector<BoidState9D> boids9D;
-    boids9D.reserve(swarmBoids.size());
-
-    for (const auto& b : swarmBoids)
-    {
-        BoidState9D b9;
-        b9.index = b.index;
-
-        for (int d = 0; d < 3; d++)
-            b9.dims[d] = b.position[d] * POSITION_SCALE;
-
-        for (int d = 3; d < DIMS_PER_BOID; d++)
-            b9.dims[d] = b.position[d];
-
-        for (int d = 0; d < 3; d++)
-            b9.velocity[d] = b.velocity[d] * VELOCITY_SCALE;
-
-        for (int d = 3; d < DIMS_PER_BOID; d++)
-            b9.velocity[d] = b.velocity[d];
-
-        boids9D.push_back(b9);
-    }
-
-    return boids9D;
-}
 
 //--------------------------------------------------------------
 void ofApp::setup()
@@ -110,8 +80,7 @@ void ofApp::setup()
 void ofApp::update()
 {
     swarm.update();
-    auto boids9D = convertTo9D(swarm.getBoids());
-    engine.updateBoids(boids9D);
+    engine.updateBoids(swarm.getBoids());
 
     if (gui) gui->update();
 }
@@ -135,11 +104,17 @@ void ofApp::draw()
     cam.begin();
 
     ofSetColor(80, 200, 255);
-    for (const auto& b : engine.getBoids())
-    {
-        glm::vec3 pos = engine.getBoidPosition(b.index);
-        ofDrawSphere(pos, 3.0f);
-    }
+
+	for (const auto& b : engine.getBoids())
+	{
+		glm::vec3 pos(
+			b.position[0],
+			b.position[1],
+			b.position[2]
+		);
+
+		ofDrawSphere(pos * 50.0f, 1.0f);
+	}
 
     cam.end();
 
