@@ -4,105 +4,303 @@ skinparam roundcorner 12
 skinparam ArrowColor #444
 skinparam defaultTextAlignment center
 
-title Boid Audio System — Signal Flow
+title Adaptive Boid Sound Engine — Detailed Signal Flow
 
-' =========================
-' INPUT
-' =========================
+' =========================================================
+' INPUT LAYER
+' =========================================================
 
 rectangle "OSC INPUT\nSwarmOSCReceiver" as OSC
 
-rectangle "Boid State\n(position[9], velocity[9])" as BOIDS
+rectangle "Boid State\nposition[9]\nvelocity[9]" as BOIDS
 
 OSC --> BOIDS : UDP / OSC messages
 
-' =========================
-' SPATIAL PROCESSING
-' =========================
+note right of BOIDS
 
-rectangle "Boid Aggregator\n- subspace fusion\n- smoothing\n- torus wrap\n- normalization" as AGG
+Raw swarm data:
+- 9D positions
+- 9D velocities
+- asynchronous updates
 
-BOIDS --> AGG : raw boids
+end note
 
-rectangle "Spatial Fields\n- spatialPos\n- prevSpatialPos\n- densities\n- mean distance" as FIELD
+' =========================================================
+' SPATIAL AGGREGATION
+' =========================================================
 
-AGG --> FIELD : computed geometry
+rectangle "Boid Aggregator" as AGG {
 
-rectangle "Derived Signals\n- normalized position\n- wrapped velocity\n- density\n- global mean distance" as DERIVED
+  rectangle "Subspace Fusion\n(weighted 3D projections)" as SUB
 
-FIELD --> DERIVED
+  rectangle "Temporal Smoothing\nspatialSmooth" as SMOOTH
 
-' =========================
-' CONTROL SIGNALS
-' =========================
+  rectangle "Torus Wrapping\n[-1,1] periodic domain" as TORUS
 
-rectangle "Control Mapping\n(Frequency / Trigger Engine)" as CONTROL
+  rectangle "Adaptive Normalization\ncenter + scale smoothing" as NORM
 
-DERIVED --> CONTROL : spatial + motion features
+  rectangle "Density Estimation\nmean pairwise distance" as DENS
 
-rectangle "Trigger System\nrate = f(distance, density)" as TRIG
-CONTROL --> TRIG
+}
 
-rectangle "Modal Parameter Control\n(freq, bw, amp per boid/mode)" as MODCTRL
-CONTROL --> MODCTRL
+BOIDS --> SUB
 
-' =========================
-' SYNTHESIS CORE
-' =========================
+SUB --> SMOOTH
 
-rectangle "ModalBank2D\n(per-boid resonant bank)" as MODBANK
+SMOOTH --> TORUS
 
-TRIG --> MODBANK : excitation impulses
-MODCTRL --> MODBANK : continuous parameters
+TORUS --> NORM
 
-rectangle "Per-Boid Audio Signals" as AUDIO
+NORM --> DENS
 
-MODBANK --> AUDIO
+note right of NORM
 
-' =========================
+Adaptive alpha:
+alpha = clamp(
+  0.005 + motion * 0.1,
+  0.005,
+  0.2
+)
+
+Stabilizes:
+- normalization center
+- normalization scale
+
+end note
+
+' =========================================================
+' DERIVED SPATIAL FEATURES
+' =========================================================
+
+rectangle "Derived Spatial Features" as DERIVED {
+
+  rectangle "Wrapped Position" as POS
+
+  rectangle "Normalized Position" as NPOS
+
+  rectangle "Wrapped Velocity" as VEL
+
+  rectangle "Density" as DENSITY
+
+  rectangle "Mean Distance" as MDIST
+
+  rectangle "Global Mean Distance" as GMDIST
+}
+
+DENS --> POS
+DENS --> NPOS
+DENS --> VEL
+DENS --> DENSITY
+DENS --> MDIST
+DENS --> GMDIST
+
+' =========================================================
+' SPATIAL SNAPSHOT BUFFER
+' =========================================================
+
+rectangle "SpatialFrame\n(Double Buffer Snapshot)" as SFRAME
+
+POS --> SFRAME
+NPOS --> SFRAME
+VEL --> SFRAME
+DENSITY --> SFRAME
+MDIST --> SFRAME
+GMDIST --> SFRAME
+
+note right of SFRAME
+
+Lock-free spatial snapshot:
+- immutable during audio callback
+- atomic pointer swap
+
+end note
+
+' =========================================================
+' CONTROL MAPPING
+' =========================================================
+
+rectangle "Control Mapping" as CTRL {
+
+  rectangle "Frequency Mapping\n(radial mapping + transpose)" as FMAP
+
+  rectangle "Density Modulation\nfrequency inflation" as DMOD
+
+  rectangle "Frequency Smoothing\nsmoothedFreq[]" as FSMOOTH
+
+  rectangle "Motion Analysis\nenergy from wrapped velocity" as MOTION
+
+  rectangle "Modal Structure Mapping\nspread / bw / amplitude tilt" as MMAP
+}
+
+NPOS --> FMAP
+DENSITY --> DMOD
+VEL --> MOTION
+MDIST --> FMAP
+
+FMAP --> DMOD
+DMOD --> FSMOOTH
+FSMOOTH --> MMAP
+MOTION --> MMAP
+
+note right of MMAP
+
+Modal parameters:
+- freq[m]
+- bw[m]
+- amp[m]
+
+Amplitude depends on:
+- motion energy
+- mode decay
+- brightness shaping
+
+end note
+
+' =========================================================
+' MODAL PARAMETER BUFFER
+' =========================================================
+
+rectangle "ModalParamsBuffer\n(Double Buffer Snapshot)" as MPARAM
+
+MMAP --> MPARAM
+
+note right of MPARAM
+
+Lock-free modal snapshot:
+- immutable during audio callback
+- atomic pointer swap
+
+end note
+
+' =========================================================
+' AUDIO THREAD
+' =========================================================
+
+rectangle "Audio Callback\n(audioOut)" as AUDIO
+
+SFRAME --> AUDIO
+MPARAM --> AUDIO
+
+' =========================================================
+' TRIGGER ENGINE
+' =========================================================
+
+rectangle "Trigger Engine" as TRIG {
+
+  rectangle "Relative Distance\nmeanDist / globalMean" as REL
+
+  rectangle "Absolute Distance\nmeanDist / scale" as ABS
+
+  rectangle "Compression Curve\npow(compression, exponent)" as CURVE
+
+  rectangle "Rate Smoothing\nsmoothedTriggerRate[]" as RSMOOTH
+
+  rectangle "Phase Accumulator\ntriggerAccumulator[]" as ACC
+}
+
+MDIST --> REL
+GMDIST --> REL
+MDIST --> ABS
+
+REL --> CURVE
+ABS --> CURVE
+
+CURVE --> RSMOOTH
+RSMOOTH --> ACC
+
+note right of TRIG
+
+Controls excitation density:
+- clustering = faster triggering
+- sparse motion = slower triggering
+
+end note
+
+' =========================================================
+' MODAL SYNTHESIS
+' =========================================================
+
+rectangle "ModalBank2D" as MODBANK {
+
+  rectangle "Incremental Parameter Upload\nboidsPerBuffer = 2" as UPLOAD
+
+  rectangle "Excitation Injection\nexciteSource()" as EXCITE
+
+  rectangle "Resonant Modal Filters\n8 modes / boid" as RES
+
+  rectangle "Per-Boid Output Sum" as BSUM
+}
+
+MPARAM --> UPLOAD
+ACC --> EXCITE
+
+UPLOAD --> RES
+EXCITE --> RES
+
+RES --> BSUM
+
+note right of RES
+
+Stateful resonator network:
+- modal decay
+- filter memory
+- excitation response
+- continuous morphing
+
+end note
+
+' =========================================================
 ' SPATIALIZATION
-' =========================
+' =========================================================
 
-rectangle "Ambisonic Encoder (3rd order)\nencode azimuth + distance" as ENCODE
+rectangle "Ambisonic Spatialization" as AMBI {
 
-AUDIO --> ENCODE
+  rectangle "Azimuth Mapping\natan2 + tanh width shaping" as AZ
 
-DERIVED --> ENCODE : position (azimuth, distance)
+  rectangle "Distance Attenuation\n1 / (1 + gain * dist)" as ATTEN
 
-rectangle "Ambisonic Frame (7 channels)" as AMBI
+  rectangle "3rd Order Encoder" as ENC
 
-ENCODE --> AMBI
+  rectangle "7-Channel Ambisonic Frame" as FRAME
 
-rectangle "Ambisonic Decoder\n(per speaker azimuth)" as DECODE
+  rectangle "Stereo Decoder" as DEC
+}
 
-AMBI --> DECODE
+NPOS --> AZ
+NPOS --> ATTEN
+
+BSUM --> ENC
+AZ --> ENC
+ATTEN --> ENC
+
+ENC --> FRAME
+
+FRAME --> DEC
+
+' =========================================================
+' OUTPUT STAGE
+' =========================================================
+
+rectangle "Output Stage" as OUTSTAGE {
+
+  rectangle "Tanh Saturation\nOUTPUT_TANH_DRIVE" as TANH
+
+  rectangle "Master Gain\nOUTPUT_MASTER_GAIN" as GAIN
+}
+
+DEC --> TANH
+TANH --> GAIN
 
 rectangle "Stereo Output" as OUT
 
-DECODE --> OUT
+GAIN --> OUT
 
-' =========================
-' FEEDBACK NOTES
-' =========================
+note right of OUTSTAGE
 
-note right of FIELD
-Key stability layer:
-- torus wrapping
-- smoothing (pos + scale)
-- epsilon distance fix
-end note
+Final mastering stage:
+- soft saturation
+- output level control
 
-note right of MODBANK
-Audio excitation is
-event-driven + continuous
-control modulation
-end note
-
-note right of ENCODE
-Spatialization depends on:
-- normalized position
-- distance attenuation
-- azimuth mapping
 end note
 
 @enduml

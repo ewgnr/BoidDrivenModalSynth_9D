@@ -13,43 +13,50 @@
 #include <cmath>
 #include <atomic>
 
-constexpr double CHANNELS   = 2;
-constexpr double SAMPLERATE = 44100;
-constexpr double BUFFERSIZE = 1024;
+constexpr std::size_t CHANNELS   = 2;
+constexpr std::size_t SAMPLERATE = 44100;
+constexpr std::size_t BUFFERSIZE = 1024;
 
 #define DIMS_PER_BOID 9
 
-// --- Trigger behaviour ---
-std::atomic<double> TRIGGER_MIX              {0.5};
-std::atomic<double> TRIGGER_MIN_RATE         {10.0};
-std::atomic<double> TRIGGER_MAX_RATE         {300.0};
-std::atomic<double> TRIGGER_CURVE_EXPONENT   {0.7};
-std::atomic<double> ABSOLUTE_DISTANCE_SCALE  {600.0};
+// --- TRIGGER SYSTEM ---
+std::atomic<double> TRIGGER_MIX               {0.5};
+std::atomic<double> TRIGGER_MIN_RATE          {10.0};
+std::atomic<double> TRIGGER_MAX_RATE          {300.0};
+std::atomic<double> TRIGGER_CURVE_EXPONENT    {0.7};
+std::atomic<double> TRIGGER_ACTIVITY_GAIN     {1.0};
+std::atomic<double> ABSOLUTE_DISTANCE_SCALE   {600.0};
 
-// --- Density behaviour ---
-std::atomic<double> DENSITY_EXP_SCALE        {2.0};
 
-// --- Frequency mapping ---
-std::atomic<double> FREQ_MIN                 {100.0};
-std::atomic<double> FREQ_MAX                 {1000.0};
-std::atomic<double> FREQ_DENSITY_INFLUENCE   {1.5};
-std::atomic<double> FREQ_RADIAL_EXPONENT     {0.6};
-std::atomic<double> FREQ_SMOOTHING           {0.995};
+// --- FREQUENCY MAPPING ---
+std::atomic<double> FREQ_MIN                  {100.0};
+std::atomic<double> FREQ_MAX                  {1000.0};
+std::atomic<double> FREQ_DENSITY_INFLUENCE    {1.5};
+std::atomic<double> FREQ_TRANSPOSE            {1.0};
+std::atomic<double> FREQ_RADIAL_EXPONENT      {0.6};
+std::atomic<double> FREQ_SMOOTHING            {0.99};
 
-// --- Modal structure ---
-std::atomic<double> MODE_FREQ_SPREAD         {0.01};
-std::atomic<double> MODE_BW_BASE             {80.0};
-std::atomic<double> MODE_BW_SPREAD           {0.2};
-std::atomic<double> MODE_AMP_BASE            {0.3};
-std::atomic<double> MODE_AMP_DECAY           {0.4};
 
-// --- Spatial rendering ---
-std::atomic<double> SPATIAL_DISTANCE_MIN     {0.05};
-std::atomic<double> SPATIAL_DISTANCE_MAX     {1.0};
-std::atomic<double> SPATIAL_GAIN_EXP         {3.0};
+// --- MODAL STRUCTURE ---
+std::atomic<double> MODE_FREQ_SPREAD          {0.01};
+std::atomic<double> MODE_BW_BASE              {80.0};
+std::atomic<double> MODE_AMP_DECAY            {0.4};
+std::atomic<double> MODE_BRIGHTNESS           {1.0};
+std::atomic<double> MODE_AMP_BASE             {0.3};
 
-// --- Output stage ---
-std::atomic<double> OUTPUT_TANH_DRIVE        {4.0};
+
+// --- SPATIAL RENDERING ---
+std::atomic<double> SPATIAL_GAIN_EXP          {3.0};
+std::atomic<double> SPATIAL_DISTANCE_MIN      {0.05};
+std::atomic<double> SPATIAL_DISTANCE_MAX      {1.0};
+std::atomic<double> SPATIAL_WIDTH             {1.0};
+std::atomic<double> SPATIAL_DENSITY_EXP_SCALE {2.0};
+
+
+// --- OUTPUT STAGE ---
+std::atomic<double> OUTPUT_TANH_DRIVE         {4.0};
+std::atomic<double> OUTPUT_MASTER_GAIN        {1.0};
+
 
 struct Subspace
 {
@@ -94,6 +101,12 @@ public:
 		p -= glm::round(p / 2.0f) * 2.0f;
 
 		return p;
+	}
+
+	glm::vec3 getNormalizedWrappedPos(int i) const
+	{
+		glm::vec3 p = getWrappedPos(i);
+		return (p - normCenter) * normScale;
 	}
 
 	glm::vec3 getWrappedVelocity(int i) const
@@ -146,46 +159,48 @@ private:
 		};
 	}
 
-    void computeSpatialPositions(const std::vector<Boid>& boids)
-    {
+	void computeSpatialPositions(const std::vector<Boid>& boids)
+	{
 		prevSpatialPos = spatialPos;
+
+		for(size_t i = 0; i < boids.size(); i++)
+		{
+			glm::vec3 agg(0.f);
+
+			for(const auto& s : subspaces)
+				agg += s.weight * extractPos(boids[i], s);
+
+			spatialPos[i] = spatialSmooth * spatialPos[i] + (1.f - spatialSmooth) * agg;
+		}
 
 		glm::vec3 minP(FLT_MAX);
 		glm::vec3 maxP(-FLT_MAX);
-		glm::vec3 center(0.0f);
 
-		for (size_t i = 0; i < boids.size(); i++)
+		for(size_t i = 0; i < boids.size(); i++)
 		{
 			minP = glm::min(minP, spatialPos[i]);
 			maxP = glm::max(maxP, spatialPos[i]);
 		}
 
 		glm::vec3 extent = maxP - minP;
+
 		float maxExtent = std::max({extent.x, extent.y, extent.z});
 
-		float targetScale = (maxExtent > 0.0001f) ? (1.0f / maxExtent) : 1.0f;
+		float targetScale = (maxExtent > 1e-5f) ? (1.0f / maxExtent) : 1.0f;
+
 		glm::vec3 targetCenter = (minP + maxP) * 0.5f;
 
-		// --- SMOOTH (critical fix)
-		float alpha = 0.05f; // small = stable, big = reactive
+		float motion = glm::length(targetCenter - smoothedCenter);
+
+		float alpha = glm::clamp(0.005f + motion * 0.1f, 0.005f, 0.2f);
 
 		smoothedCenter = glm::mix(smoothedCenter, targetCenter, alpha);
-		smoothedScale  = glm::mix(smoothedScale,  targetScale,  alpha);
+
+		smoothedScale = glm::mix(smoothedScale, targetScale, alpha);
 
 		normCenter = smoothedCenter;
 		normScale  = smoothedScale;
-
-		center /= (float)spatialPos.size();
-
-        for(size_t i=0;i<boids.size();i++)
-        {
-            glm::vec3 agg(0.f);
-            for(const auto& s : subspaces)
-                agg += s.weight * extractPos(boids[i], s);
-
-            spatialPos[i] = spatialSmooth * spatialPos[i] + (1.f - spatialSmooth) * agg;
-        }
-    }
+	}
 
     void computeDistancesAndDensity(int N)
     {
@@ -207,7 +222,7 @@ private:
 
             float meanDist = (count>0) ? sum / count : 1.f;
             meanDistances[i] = meanDist;
-            densities[i] = std::exp(-meanDist * DENSITY_EXP_SCALE.load(std::memory_order_relaxed));
+            densities[i] = std::exp(-meanDist * SPATIAL_DENSITY_EXP_SCALE.load(std::memory_order_relaxed));
         }
     }
 
@@ -220,8 +235,12 @@ private:
 		{
             for(int j=i+1;j<N;j++)
             {
-                sum += glm::length(spatialPos[i] - spatialPos[j]);
-                count++;
+                glm::vec3 d = spatialPos[i] - spatialPos[j];
+				d -= glm::round(d / 2.0f) * 2.0f;
+
+				sum += glm::length(d);
+
+				count++;
             }
 		}
 
@@ -253,9 +272,20 @@ public:
 		densities.resize(Nmax, 0.0);
 		triggerAccumulator.resize(Nmax, 0.0);
 		triggerRate.resize(Nmax, 10.0);
+		smoothedTriggerRate.resize(Nmax, 10.0);
 		boidOutputs.resize(Nmax);
 
 		allocateBuffers(Nmax, 8);
+
+		spatialA.wrappedPos.resize(Nmax);
+		spatialA.normalizedPos.resize(Nmax);
+		spatialA.velocity.resize(Nmax);
+		spatialA.density.resize(Nmax);
+		spatialA.meanDistance.resize(Nmax);
+
+		spatialB = spatialA;
+
+		activeSpatial.store(&spatialA, std::memory_order_release);
 
 		computeModalParamsControl();
 		bufferA = workingBuffer;
@@ -264,6 +294,18 @@ public:
 		activeBuffer.store(&bufferA);
 
 		speakerAz = { -0.5 * PI, 0.5 * PI };
+
+		auto initFrame = [&](SpatialFrame& f)
+		{
+			f.wrappedPos.resize(Nmax);
+			f.normalizedPos.resize(Nmax);
+			f.velocity.resize(Nmax);
+			f.density.resize(Nmax);
+			f.meanDistance.resize(Nmax);
+		};
+
+		initFrame(spatialA);
+		initFrame(spatialB);
 	}
 
 	void updateBoids(const std::vector<Boid>& boidsIn)
@@ -275,26 +317,50 @@ public:
 
 		aggregator.update(boids);
 
+		SpatialFrame* inactiveSpatial =
+			(activeSpatial.load(std::memory_order_relaxed) == &spatialA)
+			? &spatialB
+			: &spatialA;
+
+		for(int i = 0; i < N; i++)
+		{
+			inactiveSpatial->wrappedPos[i] = aggregator.getWrappedPos(i);
+			inactiveSpatial->normalizedPos[i] = aggregator.getNormalizedWrappedPos(i);
+			inactiveSpatial->velocity[i] = aggregator.getWrappedVelocity(i);
+			inactiveSpatial->density[i] = aggregator.getDensity(i);
+			inactiveSpatial->meanDistance[i] = aggregator.getMeanDistance(i);
+		}
+
+		inactiveSpatial->globalMeanDistance = aggregator.getGlobalMeanDistance();
+
+		activeSpatial.store(inactiveSpatial, std::memory_order_release);
+
 		for (int i = 0; i < N; i++)
 			densities[i] = aggregator.getDensity(i);
 
 		computeModalParamsControl();
 
-		ModalParamsBuffer* inactive = (activeBuffer.load(std::memory_order_relaxed) == &bufferA) ? &bufferB : &bufferA;
+		ModalParamsBuffer* inactiveModal =
+			(activeBuffer.load(std::memory_order_relaxed) == &bufferA)
+			? &bufferB
+			: &bufferA;
 
-		*inactive = workingBuffer;
-		activeBuffer.store(inactive, std::memory_order_release);
+		*inactiveModal = workingBuffer;
+
+		activeBuffer.store(inactiveModal, std::memory_order_release);
 
 		globalMeanDistance.store(aggregator.getGlobalMeanDistance(), std::memory_order_release);
 	}
 
 	void audioOut(ofSoundBuffer& buffer) override
 	{
+		SpatialFrame* spatial = activeSpatial.load(std::memory_order_acquire);
+
 		ModalParamsBuffer* params = activeBuffer.load(std::memory_order_acquire);
 
 		applyModalParams(*params);
 
-		double globalDist = globalMeanDistance.load(std::memory_order_acquire);
+		double globalDist = spatial->globalMeanDistance;
 
 		const double mix = TRIGGER_MIX.load(std::memory_order_relaxed);
 		const double maxRate = TRIGGER_MAX_RATE.load(std::memory_order_relaxed);
@@ -302,7 +368,7 @@ public:
 
 		for (int j = 0; j < N; j++)
 		{
-			double meanDist = aggregator.getMeanDistance(j);
+			double meanDist = spatial->meanDistance[j];
 
 			double adaptive = meanDist / (globalDist + 1e-9);
 			double absolute = meanDist / ABSOLUTE_DISTANCE_SCALE.load(std::memory_order_relaxed);
@@ -311,9 +377,21 @@ public:
 
 			double compression = std::clamp(1.0 - relative, 0.0, 1.0);
 
-			double rate = minRate + (maxRate - minRate) * std::pow(compression, TRIGGER_CURVE_EXPONENT.load(std::memory_order_relaxed));
+			double activityGain = TRIGGER_ACTIVITY_GAIN.load(std::memory_order_relaxed);
 
-			triggerRate[j] = rate;
+			double rate =
+				minRate +
+				(maxRate - minRate) *
+				std::pow(compression,
+						 TRIGGER_CURVE_EXPONENT.load(std::memory_order_relaxed));
+
+			rate *= activityGain;
+
+			smoothedTriggerRate[j] =
+				0.98 * smoothedTriggerRate[j]
+				+ 0.02 * rate;
+
+			triggerRate[j] = smoothedTriggerRate[j];
 		}
 
 		for(size_t i = 0; i < buffer.getNumFrames(); i++)
@@ -340,9 +418,13 @@ public:
 
 			for(int j = 0; j < N; j++)
 			{
-				glm::vec3 p = aggregator.getNormalizedPos(j);
+				glm::vec3 p = spatial->normalizedPos[j];
 
-				double az   = std::atan2(p.z, p.x);
+				double width = SPATIAL_WIDTH.load(std::memory_order_relaxed);
+				double az = std::atan2(p.z, p.x);
+				double widthClamped = std::clamp(width, 0.2, 3.0);
+				az = std::tanh(az * widthClamped) * M_PI;
+
 				double dist = std::clamp((double)glm::length(p), SPATIAL_DISTANCE_MIN.load(std::memory_order_relaxed), SPATIAL_DISTANCE_MAX.load(std::memory_order_relaxed));
 
 				double gain = 1.0 / (1.0 + SPATIAL_GAIN_EXP * dist);
@@ -357,7 +439,12 @@ public:
 			{
 				double sOut = ambiDec.play(ambiFrame, speakerAz[ch]);
 
-				buffer[i*2 + ch] = std::tanh(sOut) * OUTPUT_TANH_DRIVE.load(std::memory_order_relaxed);
+				double drive = OUTPUT_TANH_DRIVE.load(std::memory_order_relaxed);
+				double master = OUTPUT_MASTER_GAIN.load(std::memory_order_relaxed);
+
+				double processed = std::tanh(sOut * drive);
+
+				buffer[i*2 + ch] = processed * master;
 			}
 		}
 	}
@@ -367,12 +454,26 @@ public:
         return boids;
     }
 
-    glm::vec3 getBoidPosition(int i) const
-    {
-        return aggregator.getWrappedPos(i);
-    }
+	glm::vec3 getBoidPosition(int i) const
+	{
+		SpatialFrame* spatial = activeSpatial.load(std::memory_order_acquire);
+
+		return spatial->normalizedPos[i];
+	}
 
 private:
+
+	struct SpatialFrame
+	{
+		std::vector<glm::vec3> wrappedPos;
+		std::vector<glm::vec3> normalizedPos;
+		std::vector<glm::vec3> velocity;
+
+		std::vector<float> density;
+		std::vector<float> meanDistance;
+
+		double globalMeanDistance = 1.0;
+	};
 
     struct ModalParams
     {
@@ -407,16 +508,16 @@ private:
 	{
 		const double smooth = FREQ_SMOOTHING.load(std::memory_order_relaxed);
 
+		// --- CENTER (wrapped space, as you already do)
+		glm::vec3 center(0.0);
+		for (int k = 0; k < N; k++)
+			center += aggregator.getNormalizedWrappedPos(k);
+		center /= (double)N;
+
 		for(int j = 0; j < N; j++)
 		{
 			// --- POSITION (normalized torus space)
-			glm::vec3 pos = aggregator.getNormalizedPos(j);
-
-			// --- CENTER (wrapped space, as you already do)
-			glm::vec3 center(0.0);
-			for (int k = 0; k < N; k++)
-				center += aggregator.getWrappedPos(k);
-			center /= (double)N;
+			glm::vec3 pos = aggregator.getNormalizedWrappedPos(j);
 
 			// *** TORUS-CORRECT DISTANCE
 			glm::vec3 dCenter = pos - center;
@@ -428,77 +529,109 @@ private:
 			double normDist = glm::clamp(dist / spatialScale, 0.0, 1.0);
 
 			// --- BASE FREQUENCY
-			double baseFreq =
-				FREQ_MIN.load(std::memory_order_relaxed) +
-				(FREQ_MAX.load(std::memory_order_relaxed) - FREQ_MIN.load(std::memory_order_relaxed))
-				* normDist;
+			double t = pow(normDist, FREQ_RADIAL_EXPONENT.load(std::memory_order_relaxed));
 
+			double transpose = FREQ_TRANSPOSE.load(std::memory_order_relaxed);
+
+			double fmin = FREQ_MIN.load(std::memory_order_relaxed);
+			double fmax = FREQ_MAX.load(std::memory_order_relaxed);
+
+			// --- log space mapping (your system already lives here)
+			double logMin = std::log(fmin);
+			double logMax = std::log(fmax);
+
+			// base mapping
+			double baseFreq = fmin * std::pow(fmax / fmin, t);
+
+			// --- convert to normalized log space
+			double freqNorm = (std::log(baseFreq) - logMin) / (logMax - logMin);
+
+			// --- apply transpose in perceptual domain
+			double transposeShift = std::log(transpose) / (logMax - logMin);
+
+			freqNorm += transposeShift;
+
+			// --- keep stable bounds
+			freqNorm = std::clamp(freqNorm, 0.0, 1.0);
+
+			// --- back to Hz
+			baseFreq = std::exp(logMin + freqNorm * (logMax - logMin));
 			baseFreq *= (1.0 + densities[j] * FREQ_DENSITY_INFLUENCE.load(std::memory_order_relaxed));
-
-			baseFreq = std::clamp(baseFreq,
-								   FREQ_MIN.load(std::memory_order_relaxed),
-								   FREQ_MAX.load(std::memory_order_relaxed));
+			baseFreq = std::clamp(baseFreq, FREQ_MIN.load(std::memory_order_relaxed), FREQ_MAX.load(std::memory_order_relaxed));
 
 			if(smoothedFreq[j] <= 0.0)
 				smoothedFreq[j] = baseFreq;
 			else
 				smoothedFreq[j] =
-					smooth * smoothedFreq[j] +
-					(1.0 - smooth) * baseFreq;
+					(1.0 - smooth) * smoothedFreq[j] +
+					smooth * baseFreq;
 
 			// --- TORUS-CONSISTENT VELOCITY (*** NEW)
 			glm::vec3 vel = aggregator.getWrappedVelocity(j);
 
 			// --- MOTION / ENERGY (*** FIXED)
-			double energy = glm::length(vel);   // instead of pos
+			double energy = glm::length(vel);
 
 			double spreadMod = MODE_FREQ_SPREAD.load(std::memory_order_relaxed);
 			double bwMod     = MODE_BW_BASE.load(std::memory_order_relaxed);
 			double decayMod  = MODE_AMP_DECAY.load(std::memory_order_relaxed);
 
 			double chaos      = 1.0 + energy;
-			double brightness = 1.0 + dist;   // *** spatial instead of energy
-			double tilt       = 1.0 + energy;
+			double brightness = 1.0 + dist;
+			double tiltEnergy = 1.0 + energy;
 
 			for(size_t m = 0; m < workingBuffer.perBoid[j].freq.size(); m++)
 			{
 				double modeIndex = (double)m;
 
-				workingBuffer.perBoid[j].freq[m] =
-					smoothedFreq[j] *
-					(1.0 + spreadMod * modeIndex) *
-					(1.0 + 0.02 * chaos * sin(modeIndex));
+				workingBuffer.perBoid[j].freq[m] = smoothedFreq[j] * (1.0 + spreadMod * modeIndex) * (1.0 + 0.02 * chaos * sin(modeIndex));
 
-				workingBuffer.perBoid[j].bw[m] =
-					bwMod * (1.0 + 0.3 * modeIndex);
+				workingBuffer.perBoid[j].bw[m] = bwMod * (1.0 + 0.3 * modeIndex);
 
-				double baseAmp =
-					MODE_AMP_BASE.load(std::memory_order_relaxed) /
-					(1.0 + decayMod * modeIndex);
+				double baseAmp = MODE_AMP_BASE.load(std::memory_order_relaxed) / (1.0 + decayMod * modeIndex);
 
-				double tiltShape = pow(tilt, -modeIndex * 0.5);
-				double brightShape = pow(brightness, modeIndex * 0.3);
+				double tiltShape = std::pow(tiltEnergy, -modeIndex * 0.5);
 
-				workingBuffer.perBoid[j].amp[m] =
-					baseAmp * tiltShape * brightShape;
+				double brightnessParam = MODE_BRIGHTNESS.load(std::memory_order_relaxed);
+				double brightnessClamped = std::clamp(brightnessParam, 0.1, 3.0);
+
+				double brightShape = std::pow(brightnessClamped, modeIndex * 0.5);
+
+				workingBuffer.perBoid[j].amp[m] = baseAmp * tiltShape * brightShape;
 			}
 		}
 	}
 
-    void applyModalParams(const ModalParamsBuffer& params)
-    {
-        for(int j=0;j<N;j++)
-        {
-            for(size_t m=0; m<params.perBoid[j].freq.size(); m++)
-            {
-                modalBank2D.setParams(j, m, params.perBoid[j].freq[m], params.perBoid[j].bw[m], params.perBoid[j].amp[m]);
-            }
-        }
-    }
+	void applyModalParams(const ModalParamsBuffer& params)
+	{
+		if(N <= 0) return;
+
+		const int boidsPerBuffer = 2;
+
+		for(int n = 0; n < boidsPerBuffer; n++)
+		{
+			int j = (modalUpdateOffset + n) % N;
+
+			for(size_t m = 0; m < params.perBoid[j].freq.size(); m++)
+			{
+				modalBank2D.setParams(
+					j,
+					m,
+					params.perBoid[j].freq[m],
+					params.perBoid[j].bw[m],
+					params.perBoid[j].amp[m]
+				);
+			}
+		}
+
+		modalUpdateOffset =
+			(modalUpdateOffset + boidsPerBuffer) % N;
+	}
 
 private:
     int N = 0;
     int Nmax = 0;
+	int modalUpdateOffset = 0;
 
     std::vector<Boid> boids;
 	std::vector<double> boidOutputs;
@@ -506,6 +639,7 @@ private:
     std::vector<double> densities;
     std::vector<double> triggerAccumulator;
 	std::vector<double> triggerRate;
+	std::vector<double> smoothedTriggerRate;
 
     BoidAggregator aggregator;
     ModalBank2D modalBank2D;
@@ -517,6 +651,10 @@ private:
     ModalParamsBuffer bufferA;
     ModalParamsBuffer bufferB;
     ModalParamsBuffer workingBuffer;
+
+	SpatialFrame spatialA;
+	SpatialFrame spatialB;
+	std::atomic<SpatialFrame*> activeSpatial;
 
     std::atomic<ModalParamsBuffer*> activeBuffer;
     std::atomic<double> globalMeanDistance {1.0};
