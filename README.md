@@ -12,7 +12,6 @@ The Adaptive 9D Boid Sound Engine is a swarm-driven modal synthesis system in wh
 Sound is generated through independent resonant filters (modal bank) rather than physical coupling systems. Interaction between agents emerges implicitly through shared statistical fields such as inter-boid distance, local density, and global spatial normalization.
 
 The system combines:
-
 - high-dimensional feature aggregation
 - toroidal spatial projection
 - event-driven excitation
@@ -26,12 +25,10 @@ Each boid acts as an independent sound source whose spectral and temporal behavi
 ## 02. 9D State Representation
 
 Each boid consists of:
-
 - `position[0..8]` (9D feature vector)
 - `velocity[0..8]` (9D feature vector)
 
 The 9D state space is partitioned into three independent 3D subspaces:
-
 ```text
 | Subspace | Dimensions | Interpretation                      |
 | -------- | ---------- | ----------------------------------- |
@@ -50,30 +47,24 @@ The resulting 3D representation is therefore not a projection of a true geometri
 ### 3.1 Subspace Fusion
 
 Each boid’s spatial position is computed as a weighted sum of its three 3D subspaces:
-
 ```text
 spatialPos[i] =
     w1 * pos[0..2] +
     w2 * pos[3..5] +
     w3 * pos[6..8]
 ```
-
 The weights are normalized per system configuration so that:
-
 ```text
 w1 + w2 + w3 = 1
 ```
-
 This fusion step defines the primary mapping from the 9D feature space into a 3D spatial field used for all downstream audio processes.
 
 **3.2 Temporal Smoothing**
 
 Spatial positions are low-pass filtered:
-
 ```text
 spatialPos(t) = α * spatialPos(t-1) + (1 - α) * fusedPosition
 ```
-
 This temporal smoothing stabilizes the per-boid spatial field and reduces high-frequency jitter in derived synthesis parameters, particularly frequency mapping, density estimation, and spatialization inputs.
 
 ### 03.3 Dynamic Spatial Normalization (Swarm Frame)
@@ -99,18 +90,15 @@ Consequences:
 ### 04. Torus Wrapping Model
 
 All spatial computations operate in a periodic domain:
-
 - positions are wrapped into a toroidal space of size 2 units
 - differences are wrapped to ensure shortest-path consistency
 
 ```text
 p -= round(p / 2) * 2;
 ```
-
 This ensures that all spatial relationships are computed on a continuous torus rather than in unbounded Euclidean space, preventing boundary discontinuities and maintaining consistent neighborhood relations across wrap boundaries.
 
 This wrapping model applies to:
-
 - position representation
 - velocity reconstruction (via wrapped position differences)
 - inter-boid distance calculations
@@ -121,7 +109,6 @@ This wrapping model applies to:
 ### 05. Density Model
 
 Each boid’s density is computed from its average wrapped distance to all other boids:
-
 ```text
 meanDist[i] = average distance to all j ≠ i
 density[i]  = exp(-meanDist[i] * DENSITY_EXP_SCALE)
@@ -129,13 +116,11 @@ density[i]  = exp(-meanDist[i] * DENSITY_EXP_SCALE)
 Distances are computed using torus-wrapped spatial differences, ensuring continuity across periodic boundaries.
 
 Properties:
-
 - density is defined locally per boid
 - there is no explicit global density field in the system
 - a separate global mean distance is computed independently and used for normalization and comparative scaling
 
 Interpretation:
-
 - dense clustering → higher density values
 - sparse distribution → lower density values
 
@@ -146,15 +131,12 @@ Density acts as a control modulation signal rather than a spatial field, influen
 ### 06. Velocity Model
 
 Velocity is reconstructed using torus-consistent differences between consecutive spatial frames:
-
 ```text
 velocity[i] = wrap(spatialPos[i] - previousSpatialPos[i])
 ```
-
 This ensures that velocity remains continuous across torus boundaries and does not produce artificial spikes when a boid crosses a wrap edge.
 
 Velocity is used as a secondary excitation descriptor and influences the synthesis process through:
-
 - spectral instability (frequency modulation jitter)
 - amplitude variation across modal components
 - mode-level modulation (especially higher-order modes)
@@ -166,7 +148,6 @@ Velocity plays a secondary role in the system and does not directly influence tr
 ### 07. Trigger System (Event Excitation)
 
 Each boid maintains an independent deterministic accumulator that drives event-based excitation of the modal synthesis layer:
-
 ```text
 acc[i] += triggerRate[i] / sampleRate
 if acc[i] ≥ 1:
@@ -178,7 +159,6 @@ This produces a deterministic, continuous-time event system based on phase accum
 **Trigger rate computation:**
 
 The trigger rate is derived from spatial structure using both relative and absolute distance measures:
-
 ```text
 adaptive  = meanDist[i] / globalMeanDist
 absolute  = meanDist[i] / ABSOLUTE_DISTANCE_SCALE
@@ -198,31 +178,25 @@ Triggering is driven by relative structure, not absolute density.
 ### 08 Modal Synthesis System
 
 Each boid controls an independent modal bank:
-
 - N modes per boid (default: 8)
 - each mode is a resonant filter
 
 **Mode parameterization:**
 
 For mode index m:
-
 ```text
 freq[m] = baseFreq * (1 + spread * m + jitter)
 bw[m]   = baseBW * (1 + 0.3 * m)
 amp[m]  = baseAmp / (1 + decay * m)
 ```
-
 where:
-
 - baseFreq is derived from spatial position + density
 - jitter is a nonlinear term driven by velocity and mode index
-
 ```text
 jitter = 0.02 * (1 + energy) * sin(m)
 ```
 
-**Interpretation:**
-
+Interpretation:
 - higher modes → broader, weaker spectral components
 - velocity increases spectral instability
 - density increases spectral brightness
@@ -230,15 +204,12 @@ jitter = 0.02 * (1 + energy) * sin(m)
 ### 09. Modal Excitation Model
 
 Each trigger event injects energy into all modes of a boid:
-
 ```text
 excitation[i][m] += triggerEnergy
 ```
-
 Energy is reset after each audio frame.
 
 Modal output is summed per boid:
-
 ```text
 boidOutput[i] = Σ modeOutput[i][m] * weight[m]
 ```
@@ -257,9 +228,7 @@ distance = clamp(|position|)
 
 gain = 1 / (1 + k * distance)
 ```
-
 The signal is encoded into a 3rd-order ambisonic field (7 channels):
-
 - W (omnidirectional)
 - X/Y/Z (first order)
 - higher-order components (2nd + 3rd order)
@@ -271,11 +240,9 @@ The ambisonic representation is fixed to 3rd order (7 channels) and does not dyn
 ### 11. Ambisonic Decoding
 
 The ambisonic field is decoded into stereo:
-
 ```text
 stereo = decode(ambiField, speakerAngle)
 ```
-
 Two virtual speaker positions are used for left/right output.
 
 ---
@@ -283,11 +250,9 @@ Two virtual speaker positions are used for left/right output.
 ### 12. Output Stage
 
 Final output is saturated using soft clipping:
-
 ```text
 output = tanh(signal * drive)
 ```
-
 This prevents modal summation from exceeding stable amplitude bounds.
 
 ---
@@ -326,16 +291,14 @@ This prevents modal summation from exceeding stable amplitude bounds.
 
 ### 14. System Characteristics
 
-**Emergent behavior sources:**
-
+Emergent behavior sources:
 - ratio-based trigger system (relative geometry)
 - nonlinear modal jitter term
 - density-dependent excitation scaling
 - torus-wrapped spatial continuity
 - multi-mode spectral decay hierarchy 
 
-**Not present in implementation:**
-
+Not present in implementation:
 - no physical force simulation
 - no orthogonal 9D basis construction
 - no explicit coupling matrix between boids
