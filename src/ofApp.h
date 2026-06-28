@@ -6,6 +6,8 @@
 #include "SwarmOSCReceiver.h"
 #include "BoidSoundEngine.h"
 
+#include "ParamRegistry.h"
+
 class ofApp : public ofBaseApp
 {
 public:
@@ -14,6 +16,12 @@ public:
     void draw() override;
 
     void onSliderEvent(ofxDatGuiSliderEvent e);
+
+	void saveAudioPreset(const std::string& presetName);
+	void loadAudioPreset(const std::string& presetName);
+	void syncGuiToParams();
+
+	void keyPressed(int key);
 
     ofSoundStream soundStream;
     SwarmOSCReceiver swarm;
@@ -30,8 +38,9 @@ public:
 
     struct SliderBinding
     {
-        ofxDatGuiSlider* slider;
-        std::atomic<double>* parameter;
+		std::string name;
+		ofxDatGuiSlider* slider = nullptr;
+		std::atomic<double>* parameter = nullptr;
     };
 
     std::vector<SliderBinding> sliderBindings;
@@ -42,4 +51,16 @@ public:
                                     float max,
                                     float value,
                                     std::atomic<double>& param);
+
+	enum PresetMode
+    {
+        NONE,
+        SAVE_MODE,
+        LOAD_MODE
+    };
+
+    PresetMode presetMode = NONE;
+
+    int selectedPreset = 1;
+    const int maxPresets = 20;
 };

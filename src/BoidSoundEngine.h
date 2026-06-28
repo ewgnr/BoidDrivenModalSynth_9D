@@ -13,50 +13,13 @@
 #include <cmath>
 #include <atomic>
 
+#include "ParamRegistry.h"
+
 constexpr std::size_t CHANNELS   = 2;
 constexpr std::size_t SAMPLERATE = 44100;
 constexpr std::size_t BUFFERSIZE = 1024;
 
 #define DIMS_PER_BOID 9
-
-// --- TRIGGER SYSTEM ---
-std::atomic<double> TRIGGER_MIX               {0.5};
-std::atomic<double> TRIGGER_MIN_RATE          {10.0};
-std::atomic<double> TRIGGER_MAX_RATE          {300.0};
-std::atomic<double> TRIGGER_CURVE_EXPONENT    {0.7};
-std::atomic<double> TRIGGER_ACTIVITY_GAIN     {1.0};
-std::atomic<double> ABSOLUTE_DISTANCE_SCALE   {600.0};
-
-
-// --- FREQUENCY MAPPING ---
-std::atomic<double> FREQ_MIN                  {100.0};
-std::atomic<double> FREQ_MAX                  {1000.0};
-std::atomic<double> FREQ_DENSITY_INFLUENCE    {1.5};
-std::atomic<double> FREQ_TRANSPOSE            {1.0};
-std::atomic<double> FREQ_RADIAL_EXPONENT      {0.6};
-std::atomic<double> FREQ_SMOOTHING            {0.99};
-
-
-// --- MODAL STRUCTURE ---
-std::atomic<double> MODE_FREQ_SPREAD          {0.01};
-std::atomic<double> MODE_BW_BASE              {80.0};
-std::atomic<double> MODE_AMP_DECAY            {0.4};
-std::atomic<double> MODE_BRIGHTNESS           {1.0};
-std::atomic<double> MODE_AMP_BASE             {0.3};
-
-
-// --- SPATIAL RENDERING ---
-std::atomic<double> SPATIAL_GAIN_EXP          {3.0};
-std::atomic<double> SPATIAL_DISTANCE_MIN      {0.05};
-std::atomic<double> SPATIAL_DISTANCE_MAX      {1.0};
-std::atomic<double> SPATIAL_WIDTH             {1.0};
-std::atomic<double> SPATIAL_DENSITY_EXP_SCALE {2.0};
-
-
-// --- OUTPUT STAGE ---
-std::atomic<double> OUTPUT_TANH_DRIVE         {4.0};
-std::atomic<double> OUTPUT_MASTER_GAIN        {1.0};
-
 
 struct Subspace
 {
@@ -566,10 +529,10 @@ private:
 					(1.0 - smooth) * smoothedFreq[j] +
 					smooth * baseFreq;
 
-			// --- TORUS-CONSISTENT VELOCITY (*** NEW)
+			// --- TORUS-CONSISTENT VELOCITY
 			glm::vec3 vel = aggregator.getWrappedVelocity(j);
 
-			// --- MOTION / ENERGY (*** FIXED)
+			// --- MOTION / ENERGY
 			double energy = glm::length(vel);
 
 			double spreadMod = MODE_FREQ_SPREAD.load(std::memory_order_relaxed);

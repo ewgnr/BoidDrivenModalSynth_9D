@@ -9,7 +9,7 @@ ofxDatGuiSlider* ofApp::addBoundSlider(ofxDatGuiFolder* folder,
                                        std::atomic<double>& param)
 {
     auto* s = folder->addSlider(label, min, max, value);
-    sliderBindings.push_back({s, &param});
+    sliderBindings.push_back({label, s, &param});
     return s;
 }
 
@@ -120,11 +120,7 @@ void ofApp::draw()
 
 	for (const auto& b : engine.getBoids())
 	{
-		glm::vec3 pos(
-			b.position[0],
-			b.position[1],
-			b.position[2]
-		);
+		glm::vec3 pos(b.position[0], b.position[1], b.position[2]);
 
 		ofDrawSphere(pos * 50.0f, 1.0f);
 	}
@@ -145,6 +141,163 @@ void ofApp::onSliderEvent(ofxDatGuiSliderEvent e)
         {
             binding.parameter->store(e.value);
             break;
+        }
+    }
+}
+
+//--------------------------------------------------------------
+void ofApp::saveAudioPreset(const std::string& presetName)
+{
+    ofJson json;
+
+    for (const auto& param : gAudioParams)
+    {
+        json["audio"][param.name] =
+            param.value->load(std::memory_order_relaxed);
+    }
+
+    std::string fileName =
+        "preset_" + presetName + ".json";
+
+    ofSavePrettyJson(fileName, json);
+
+    ofLogNotice()
+        << "Saved preset: " << fileName;
+}
+
+//--------------------------------------------------------------
+void ofApp::loadAudioPreset(const std::string& presetName)
+{
+    std::string fileName =
+        "preset_" + presetName + ".json";
+
+    if (!ofFile::doesFileExist(fileName))
+    {
+        ofLogWarning()
+            << "Preset does not exist: "
+            << fileName;
+
+        return;
+    }
+
+    ofJson json = ofLoadJson(fileName);
+
+    if (!json.contains("audio"))
+        return;
+
+    for (auto& param : gAudioParams)
+    {
+        if (json["audio"].contains(param.name))
+        {
+            double value =
+                json["audio"][param.name]
+                .get<double>();
+
+            param.value->store(
+                value,
+                std::memory_order_relaxed
+            );
+        }
+    }
+
+    ofLogNotice()
+        << "Loaded preset: "
+        << fileName;
+}
+
+//--------------------------------------------------------------
+void ofApp::syncGuiToParams()
+{
+    for (auto& binding : sliderBindings)
+    {
+        if (binding.slider && binding.parameter)
+        {
+            binding.slider->setValue(
+                binding.parameter->load(
+                    std::memory_order_relaxed
+                )
+            );
+        }
+    }
+}
+
+//--------------------------------------------------------------
+void ofApp::keyPressed(int key)
+{
+    // Enter save mode
+    if (key == 's')
+    {
+        presetMode = SAVE_MODE;
+        selectedPreset = 1;
+
+        std::cout << "\n=== SAVE PRESET ===\n";
+        std::cout << "Use UP/DOWN arrows, ENTER to save.\n";
+		std::cout << "Selected: " << std::setw(3) << std::setfill('0') << selectedPreset << std::endl;
+        return;
+    }
+
+    // Enter load mode
+    if (key == 'l')
+    {
+        presetMode = LOAD_MODE;
+        selectedPreset = 1;
+
+        std::cout << "\n=== LOAD PRESET ===\n";
+        std::cout << "Use UP/DOWN arrows, ENTER to load.\n";
+		std::cout << "Selected: " << std::setw(3) << std::setfill('0') << selectedPreset << std::endl;
+        return;
+    }
+
+    // Navigation while in save/load mode
+    if (presetMode != NONE)
+    {
+        if (key == OF_KEY_UP)
+        {
+            selectedPreset++;
+
+            if (selectedPreset > maxPresets)
+                selectedPreset = 1;
+
+            std::cout << "Selected: " << std::setw(3) << std::setfill('0') << selectedPreset << std::endl;
+        }
+
+        if (key == OF_KEY_DOWN)
+        {
+            selectedPreset--;
+
+            if (selectedPreset < 1)
+                selectedPreset = maxPresets;
+
+            std::cout << "Selected: " << std::setw(3) << std::setfill('0') << selectedPreset << std::endl;
+        }
+
+        if (key == OF_KEY_RETURN)
+        {
+            std::stringstream ss;
+            ss << std::setw(3) << std::setfill('0') << selectedPreset;
+
+            std::string presetName = ss.str();
+
+            if (presetMode == SAVE_MODE)
+            {
+                saveAudioPreset(presetName);
+                std::cout << "Saved preset " << presetName << std::endl;
+            }
+            else if (presetMode == LOAD_MODE)
+            {
+                loadAudioPreset(presetName);
+                syncGuiToParams();
+
+                std::cout << "Loaded preset " << presetName << std::endl;
+            }
+
+            presetMode = NONE;
+        }
+
+        if (key == OF_KEY_ESC)
+        {
+            presetMode = NONE;
+            std::cout << "Cancelled\n";
         }
     }
 }
