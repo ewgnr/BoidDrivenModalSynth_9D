@@ -5,13 +5,12 @@
 class PinkNoiseGenerator
 {
 public:
-    explicit PinkNoiseGenerator(double pAmplitude = 1.0)
-        : amp(pAmplitude)
+    explicit PinkNoiseGenerator(double pAmplitude = 1.0) : amp(pAmplitude)
     {
         reset();
     }
 
-    inline double play()
+    inline double process()
     {
         const double white = dist(rng) * amp;
         const double pink = 0.5 * white + 0.5 * last;
@@ -30,8 +29,8 @@ public:
     }
 
 private:
-    std::mt19937 rng{std::random_device{}()};
-    std::uniform_real_distribution<double> dist{-1.0, 1.0};
+    std::mt19937 rng{ std::random_device{}() };
+    std::uniform_real_distribution<double> dist{ -1.0, 1.0 };
     double last = 0.0;
     double amp;
 };

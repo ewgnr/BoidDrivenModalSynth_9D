@@ -11,7 +11,8 @@ public:
         : currentTime(0.0)
         , startValue(0.0)
         , currentSegment(0)
-        , active(false) {}
+        , active(false) {
+    }
 
     inline void set(const std::vector<std::pair<double, double>>& pSegments)
     {
@@ -26,17 +27,14 @@ public:
     {
         currentTime = 0.0;
         currentSegment = 0;
-        if (!segments.empty())
-            startValue = segments[0].second;
+        startValue = 0.0;
         active = !segments.empty();
     }
 
-    inline double play(double pDt)
+    inline double process(double pDt)
     {
         if (!active || segments.empty())
-            return segments.empty() ? 0.0 : segments.back().second;
-
-        double value = startValue;
+            return 0.0;
 
         while (pDt > 0.0 && active)
         {
@@ -46,9 +44,14 @@ public:
             {
                 startValue = segTarget;
                 currentTime = 0.0;
-                currentSegment++;
+                ++currentSegment;
+
                 if (currentSegment >= segments.size())
+                {
                     active = false;
+                    return startValue;
+                }
+
                 continue;
             }
 
@@ -58,20 +61,29 @@ public:
             currentTime += step;
             pDt -= step;
 
-            const double t = currentTime / segDuration;
-            value = startValue + (segTarget - startValue) * t;
+            const double t = std::clamp(currentTime / segDuration, 0.0, 1.0);
+            const double value = startValue + (segTarget - startValue) * t;
 
             if (currentTime >= segDuration)
             {
-                currentTime = 0.0;
                 startValue = segTarget;
-                currentSegment++;
-                if (currentSegment >= segments.size())
-                    active = false;
-            }
-        }
+                currentTime = 0.0;
+                ++currentSegment;
 
-        return value;
+                if (currentSegment >= segments.size())
+                {
+                    active = false;
+                    return startValue;
+                }
+
+                if (pDt <= 0.0)
+                    return value;
+
+                continue;
+            }
+            return value;
+        }
+        return startValue;
     }
 
     inline bool isActive() const { return active; }

@@ -1,32 +1,41 @@
 #pragma once
+
 #include <array>
 #include <cmath>
 
 class AmbiDecode2D
 {
 public:
-	AmbiDecode2D()
-		: output(0.0) { }
 
-	inline double play(const std::array<double, 7> & pDecodeIn, double pSpeakerAz)
+	inline double process(const std::array<double, 7>& in, double az)
 	{
-		size_t order = 3;
+		constexpr size_t order = 3;
+		constexpr size_t o = order;
 
-		output = 0.5 * pDecodeIn[0];
-		output += std::cos(1 * pSpeakerAz) * weight2D[order - 1][1] * pDecodeIn[1];
-		output += std::sin(1 * pSpeakerAz) * weight2D[order - 1][2] * pDecodeIn[2];
-		output += std::cos(2 * pSpeakerAz) * weight2D[order - 1][3] * pDecodeIn[3];
-		output += std::sin(2 * pSpeakerAz) * weight2D[order - 1][4] * pDecodeIn[4];
-		output += std::cos(3 * pSpeakerAz) * weight2D[order - 1][5] * pDecodeIn[5];
-		output += std::sin(3 * pSpeakerAz) * weight2D[order - 1][6] * pDecodeIn[6];
+		const double c1 = std::cos(az);
+		const double s1 = std::sin(az);
+		const double c2 = std::cos(2.0 * az);
+		const double s2 = std::sin(2.0 * az);
+		const double c3 = std::cos(3.0 * az);
+		const double s3 = std::sin(3.0 * az);
 
-		return output * norm2D[order - 1];
+		double out = 0.5 * in[0];
+
+		out += c1 * weight2D[o][1] * in[1];
+		out += s1 * weight2D[o][2] * in[2];
+
+		out += c2 * weight2D[o][3] * in[3];
+		out += s2 * weight2D[o][4] * in[4];
+
+		out += c3 * weight2D[o][5] * in[5];
+		out += s3 * weight2D[o][6] * in[6];
+
+		return out * norm2D[o];
 	}
 
 private:
-	double output;
 
-inline static const std::array<double, 12> norm2D = {
+inline static constexpr std::array<double, 12> norm2D = {
 		1.0,
 		0.75,
 		0.625,
@@ -41,7 +50,7 @@ inline static const std::array<double, 12> norm2D = {
 		0.322360
 	};
 
-	inline static const std::array<std::array<double, 12>, 13> weight2D =
+	inline static constexpr std::array<std::array<double, 12>, 13> weight2D =
 	{{
 		{ 0.500000, 0.000000, 0.000000, 0.000000, 0.000000, 0.000000, 0.000000, 0.000000, 0.000000, 0.000000, 0.000000, 0.000000 },
 		{ 0.666667, 0.166667, 0.000000, 0.000000, 0.000000, 0.000000, 0.000000, 0.000000, 0.000000, 0.000000, 0.000000, 0.000000 },
